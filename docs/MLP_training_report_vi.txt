@@ -1,0 +1,900 @@
+BÁO CÁO CHI TIẾT QUY TRÌNH HUẤN LUYỆN MÔ HÌNH MLP
+WEPASTACKS INBOUND CONGESTION PREDICTION
+======================================================================
+
+Notebook triển khai: MLP_inbound_congestion_training.ipynb
+Dataset: wepastacks_inbound_clean.csv
+Model đã lưu: model_outputs/mlp_congestion.keras
+Mục tiêu: dự đoán nguy cơ congestion tại một dock trong 60 phút tiếp theo.
+
+
+1. TÓM TẮT MÔ HÌNH
+----------------------------------------------------------------------
+
+Mô hình hiện tại là một Multilayer Perceptron (MLP) dùng cho binary
+classification. Mỗi quan sát đại diện cho trạng thái của một dock tại cuối một
+khoảng 15 phút. Model trả về một giá trị sigmoid trong khoảng 0 đến 1.
+
+Target được định nghĩa như sau:
+
+- congestion = 1 nếu queue của dock đạt ít nhất 16 pallet trong một trong bốn
+  khoảng 15 phút tiếp theo.
+- congestion = 0 nếu queue luôn nhỏ hơn 16 pallet trong toàn bộ 60 phút tiếp theo.
+
+Model sử dụng bảy input features:
+
+1. buffer_fill_ratio
+2. arrivals_15m
+3. mean_arrivals_60m
+4. dock_1
+5. dock_2
+6. dock_3
+7. dock_4
+
+Kiến trúc:
+
+Input 7 features
+    -> Dense 32, ReLU
+    -> Dropout 20%
+    -> Dense 16, ReLU
+    -> Dense 1, Sigmoid
+
+Tổng số tham số trainable: 801.
+
+
+2. MỤC TIÊU DỰ ĐOÁN
+----------------------------------------------------------------------
+
+Tại cuối interval t, model trả lời câu hỏi:
+
+"Trong 60 phút tiếp theo, buffer của dock có đạt ít nhất 80% capacity không?"
+
+Các tham số định nghĩa bài toán:
+
+- Độ dài một interval: 900 giây = 15 phút.
+- Prediction horizon: 4 intervals = 3,600 giây = 60 phút.
+- Buffer capacity: 20 pallet/dock.
+- Congestion threshold: 0.80.
+- Congestion level: 20 x 0.80 = 16 pallet.
+- Các dock: 1, 2, 3 và 4.
+
+Đây là target được tạo từ queue simulation. Dataset gốc không có nhãn congestion
+thực tế hoặc queue thực tế.
+
+
+3. MÔI TRƯỜNG HUẤN LUYỆN HIỆN TẠI
+----------------------------------------------------------------------
+
+Môi trường .venv đã dùng để kiểm tra artifacts hiện tại có các phiên bản chính:
+
+- Python: 3.9.6
+- TensorFlow: 2.20.0
+- Keras: 3.10.0
+- NumPy: 2.0.2
+- Pandas: 2.3.3
+- scikit-learn: 1.6.1
+- Matplotlib: 3.9.4
+- Seaborn: 0.13.2
+
+Notebook không ép model sử dụng CPU hoặc GPU. TensorFlow tự chọn thiết bị khả
+dụng. Kết quả có thể khác nhẹ khi thay đổi phiên bản thư viện hoặc phần cứng.
+
+
+4. REPRODUCIBILITY SETTINGS
+----------------------------------------------------------------------
+
+Random seed được đặt bằng 42 cho:
+
+- Python random.
+- NumPy.
+- TensorFlow/Keras.
+- Dropout layer.
+
+Notebook đồng thời yêu cầu TensorFlow bật deterministic operations khi môi trường
+hỗ trợ:
+
+- PYTHONHASHSEED = 42.
+- TF_DETERMINISTIC_OPS = 1.
+- tf.keras.utils.set_random_seed(42).
+- tf.config.experimental.enable_op_determinism().
+
+Những thiết lập này làm kết quả ổn định hơn giữa các lần chạy. Chúng không đảm
+bảo kết quả giống tuyệt đối trên mọi hệ điều hành, TensorFlow version hoặc phần
+cứng tăng tốc.
+
+
+5. CÁC HYPERPARAMETER CHÍNH
+----------------------------------------------------------------------
+
+Tên parameter                    Giá trị
+------------------------------   -----------------------------
+Random seed                      42
+Interval duration                900 giây
+Prediction horizon               4 intervals / 60 phút
+Buffer capacity                  20 pallet/dock
+Congestion threshold             0.80
+Congestion level                 16 pallet
+Service capacity margin          0.10 / 10%
+Training end day                 60
+Validation end day               74
+Maximum epochs                   100
+Batch size                       256
+Learning rate                    0.001
+Early stopping patience          8 epochs
+Early stopping monitor           validation loss
+Restore best weights             True
+Hidden layer 1                   32 neurons, ReLU
+Dropout rate                     0.20
+Hidden layer 2                   16 neurons, ReLU
+Output layer                     1 neuron, Sigmoid
+Loss                             Binary cross-entropy
+Optimizer                        Adam
+Class imbalance                  Balanced class weights
+Threshold selection              Validation F1 maximum
+Selected prediction threshold    0.9583001137
+
+
+6. ĐỌC VÀ KIỂM TRA DỮ LIỆU
+----------------------------------------------------------------------
+
+Notebook tìm file theo thứ tự:
+
+1. wepastacks_inbound_clean.csv trong working directory.
+2. assignment_2/wepastacks_inbound_clean.csv.
+3. Nếu chạy trên Google Colab, yêu cầu upload file.
+
+Các bước làm sạch:
+
+1. Chuyển tên cột thành chữ thường và xóa khoảng trắng hai đầu.
+2. Yêu cầu tối thiểu hai cột arrival_time và dock.
+3. Nếu có cột type, chỉ giữ type = delivery sau khi chuẩn hóa string.
+4. Chuyển arrival_time và dock sang numeric; giá trị lỗi thành missing.
+5. Xóa dòng thiếu arrival_time hoặc dock.
+6. Chuyển arrival_time và dock thành integer.
+7. Chỉ giữ arrival_time >= 0.
+8. Chỉ giữ dock thuộc {1, 2, 3, 4}.
+9. Tính lại time_bin_15m = floor(arrival_time / 900).
+10. Sắp xếp theo arrival_time rồi dock.
+
+Dataset hiện tại sau kiểm tra có 205,258 pallet events hợp lệ.
+
+
+7. TỔNG HỢP PALLET THÀNH INTERVAL 15 PHÚT
+----------------------------------------------------------------------
+
+Mỗi dòng gốc là một pallet. MLP không dùng trực tiếp từng pallet mà dùng số pallet
+đến từng dock trong mỗi khoảng 15 phút.
+
+arrivals_15m(t, i) = số dòng có time_bin_15m = t và dock = i
+
+Pipeline tạo toàn bộ tích Descartes giữa:
+
+- Mọi time bin từ bin đầu đến bin cuối.
+- Bốn dock 1, 2, 3 và 4.
+
+Nếu một dock không có event trong interval, arrivals_15m được gán bằng 0. Sau bước
+này, mỗi time bin bắt buộc phải có đúng bốn dòng.
+
+Dataset hiện tại có:
+
+- 8,395 interval liên tục.
+- 33,580 dòng dock-interval trước khi loại rolling/future rows.
+
+Biến thời gian được tính lại:
+
+interval_start_seconds = time_bin_15m x 900
+day = floor(interval_start_seconds / 86,400) + 1
+hour = floor((interval_start_seconds mod 86,400) / 3,600)
+
+Sau đó dữ liệu được sắp xếp theo dock rồi time_bin_15m. Thứ tự này cần thiết cho
+rolling window, queue simulation và future shifts.
+
+
+8. ROLLING FEATURE 60 PHÚT
+----------------------------------------------------------------------
+
+mean_arrivals_60m được tính riêng cho từng dock:
+
+mean_arrivals_60m(t)
+    = [A(t) + A(t-1) + A(t-2) + A(t-3)] / 4
+
+Rolling window bao gồm interval hiện tại và ba interval trước đó. min_periods=4,
+do đó ba dòng đầu của mỗi dock bị missing và không được đưa vào model table.
+
+Feature này chỉ sử dụng hiện tại và quá khứ, không sử dụng future arrivals.
+
+
+9. ƯỚC TÍNH SERVICE RATE
+----------------------------------------------------------------------
+
+Dataset không có số pallet được robot xử lý thực tế. Service rate được ước tính
+riêng cho mỗi dock bằng các interval có day <= 60:
+
+service_rate_i
+    = max(1, ceil((1 + 0.10) x mean_training_arrivals_i))
+
+Kết quả hiện tại:
+
+Dock   Mean arrivals/15m dùng để ước tính   Service rate/15m
+----   ----------------------------------   ----------------
+1      22.6916                              25
+2       1.0420                               2
+3       0.7805                               1
+4       0.6192                               1
+
+Validation và test không được dùng để tính service rate. Các interval cuối ngày
+60 có thể được dùng để ước tính service rate vì chúng vẫn nằm trước validation,
+ngay cả khi một số interval sát boundary bị loại khỏi model training set để tạo
+khoảng cách cho future label.
+
+
+10. QUEUE SIMULATION
+----------------------------------------------------------------------
+
+Queue được mô phỏng độc lập cho từng dock, bắt đầu bằng 0. Với mỗi interval:
+
+Q_i(t) = queue đang có trước khi xử lý interval
+A_i(t) = arrivals_15m hiện tại
+S_i    = service rate cố định của dock
+K_i    = buffer capacity = 20
+
+Số pallet còn lại sau service:
+
+R_i(t) = max(0, Q_i(t) + A_i(t) - S_i)
+
+Overflow:
+
+O_i(t) = max(0, R_i(t) - K_i)
+
+Queue được lưu cho interval:
+
+Q_i(t+1) = min(R_i(t), K_i)
+
+Trong code, queue_length của một dòng là queue sau khi cộng arrivals hiện tại,
+trừ service và giới hạn capacity. Vì có phép min với capacity, queue_length luôn
+nằm trong [0, 20].
+
+buffer_fill_ratio = queue_length / 20
+
+Biến này luôn nằm trong [0, 1]. overflow_pallets ghi lại phần vượt quá capacity
+thay vì để queue tăng không giới hạn.
+
+
+11. TẠO CONGESTION TARGET
+----------------------------------------------------------------------
+
+Với mỗi dock và interval t, pipeline lấy queue của bốn interval tiếp theo:
+
+future_max_queue(t)
+    = max[Q(t+1), Q(t+2), Q(t+3), Q(t+4)]
+
+congestion(t) = 1 nếu future_max_queue(t) >= 16
+congestion(t) = 0 nếu future_max_queue(t) < 16
+
+Bốn dòng cuối mỗi dock không có đủ future horizon nên bị loại. future_max_queue
+chỉ dùng để tạo label, không được đưa vào input features.
+
+Sau khi loại ba rolling rows đầu và bốn future rows cuối của mỗi dock, model table
+có 33,552 dòng.
+
+Tỷ lệ congestion trên toàn model table là khoảng 16.13%.
+
+
+12. FEATURE TABLE
+----------------------------------------------------------------------
+
+Ba numeric features:
+
+1. buffer_fill_ratio
+   - Mức đầy hiện tại của buffer.
+   - Phạm vi trước scaling: 0 đến 1.
+
+2. arrivals_15m
+   - Số pallet đến dock trong interval hiện tại.
+
+3. mean_arrivals_60m
+   - Trung bình arrivals của interval hiện tại và ba interval trước.
+
+Dock được one-hot encode thành bốn biến:
+
+- dock_1
+- dock_2
+- dock_3
+- dock_4
+
+Không dùng trực tiếp dock = 1, 2, 3, 4 như một numeric feature vì khoảng cách giữa
+các số dock không có ý nghĩa định lượng.
+
+Thứ tự input bắt buộc của model:
+
+[buffer_fill_ratio,
+ arrivals_15m,
+ mean_arrivals_60m,
+ dock_1,
+ dock_2,
+ dock_3,
+ dock_4]
+
+SKU, batch và week không được dùng trong baseline MLP hiện tại.
+
+
+13. CHIA TRAINING, VALIDATION VÀ TEST
+----------------------------------------------------------------------
+
+Pipeline dùng chronological split, không dùng random split.
+
+Gọi t là interval_start_seconds.
+
+Training:
+
+t + 3,600 < 60 x 86,400
+
+Validation:
+
+t >= 60 x 86,400
+và t + 3,600 < 74 x 86,400
+
+Test:
+
+t >= 74 x 86,400
+
+Điều kiện strict inequality tạo một khoảng trống bốn interval trước mỗi boundary.
+Nhờ đó label của training không nhìn sang validation và label validation không
+nhìn sang test. Tổng cộng 32 dock-interval rows thuộc hai boundary gaps và không
+nằm trong ba tập.
+
+Kết quả split:
+
+Split         Observations   Positive   Negative   Congestion rate
+----------    ------------   --------   --------   ---------------
+Training      22,628          4,065     18,563      17.96%
+Validation     5,360            663      4,697      12.37%
+Test           5,532            677      4,855      12.24%
+
+Cả ba tập tổng hợp đều có đủ hai target classes.
+
+
+14. FEATURE STANDARDIZATION
+----------------------------------------------------------------------
+
+StandardScaler chỉ được fit trên ba numeric features của X_train. Dock one-hot
+features giữ nguyên 0/1.
+
+Công thức:
+
+z = (x - training_mean) / training_standard_deviation
+
+Scaler đã fit trên đúng 22,628 training observations. Thống kê đã lưu:
+
+Feature               Mean training       Scale/standard deviation
+-------------------   ------------------  ------------------------
+buffer_fill_ratio       0.1784691533        0.3746151859
+arrivals_15m            6.2853102351       13.1328420887
+mean_arrivals_60m       6.2882048789       12.9925221672
+
+Variance tương ứng:
+
+- buffer_fill_ratio: 0.1403365375
+- arrivals_15m: 172.4715413259
+- mean_arrivals_60m: 168.8056322645
+
+Quy trình bắt buộc và đã được thực hiện:
+
+1. scaler.fit_transform(X_train numeric).
+2. scaler.transform(X_validation numeric).
+3. scaler.transform(X_test numeric).
+
+Scaler không được fit lại trên validation hoặc test.
+
+
+15. XỬ LÝ CLASS IMBALANCE
+----------------------------------------------------------------------
+
+Training set có:
+
+- Class 0: 18,563 observations.
+- Class 1: 4,065 observations.
+
+Balanced class weight được tính chỉ từ y_train:
+
+weight_c = N / (number_of_classes x count_c)
+
+Kết quả:
+
+- class_weight[0] = 0.6094920002
+- class_weight[1] = 2.7832718327
+
+Một positive observation có trọng số trong training loss lớn hơn một negative
+observation khoảng 4.57 lần. Điều này giúp model không tối ưu bằng cách ưu tiên
+quá mức class 0.
+
+Không oversample training data. Validation và test giữ nguyên phân bố tự nhiên.
+
+
+16. KIẾN TRÚC MLP VÀ SỐ THAM SỐ
+----------------------------------------------------------------------
+
+16.1. Input
+
+- Shape: (batch_size, 7).
+- Không có tham số trainable.
+
+16.2. Hidden layer 1
+
+- Loại: Dense.
+- Input units: 7.
+- Output units: 32.
+- Activation: ReLU.
+- Use bias: True.
+- Kernel initializer: GlorotUniform.
+- Bias initializer: Zeros.
+
+Số tham số:
+
+7 x 32 weights + 32 bias = 256
+
+ReLU:
+
+ReLU(x) = max(0, x)
+
+16.3. Dropout
+
+- Dropout rate: 0.20.
+- Seed: 42.
+- Trainable parameters: 0.
+
+Trong training, khoảng 20% activation được tắt ngẫu nhiên ở mỗi update. Dropout
+không hoạt động khi validation, test hoặc inference.
+
+16.4. Hidden layer 2
+
+- Loại: Dense.
+- Input units: 32.
+- Output units: 16.
+- Activation: ReLU.
+- Use bias: True.
+- Kernel initializer: GlorotUniform.
+- Bias initializer: Zeros.
+
+Số tham số:
+
+32 x 16 weights + 16 bias = 528
+
+16.5. Output layer
+
+- Loại: Dense.
+- Input units: 16.
+- Output units: 1.
+- Activation: Sigmoid.
+- Use bias: True.
+- Kernel initializer: GlorotUniform.
+- Bias initializer: Zeros.
+
+Số tham số:
+
+16 x 1 weight + 1 bias = 17
+
+Sigmoid:
+
+sigmoid(z) = 1 / (1 + exp(-z))
+
+16.6. Tổng tham số
+
+Layer                      Parameters
+------------------------   ----------
+Dense 7 -> 32                    256
+Dropout                            0
+Dense 32 -> 16                   528
+Dense 16 -> 1                     17
+TOTAL                             801
+
+Toàn bộ 801 tham số đều trainable; không có frozen hoặc non-trainable parameters.
+
+
+17. LOSS FUNCTION
+----------------------------------------------------------------------
+
+Loss được sử dụng là binary cross-entropy:
+
+BCE = -[y log(p) + (1-y) log(1-p)]
+
+Trong training, BCE được điều chỉnh bằng class weights. Positive errors bị phạt
+mạnh hơn negative errors do class 1 hiếm hơn.
+
+Early stopping theo dõi val_loss. Validation loss không dùng để cập nhật weights;
+nó chỉ dùng để xác định khi nào nên dừng và weights epoch nào nên được giữ lại.
+
+
+18. OPTIMIZER ADAM
+----------------------------------------------------------------------
+
+Model sử dụng Adam với cấu hình đã lưu:
+
+- Learning rate: 0.001.
+- beta_1: 0.9.
+- beta_2: 0.999.
+- epsilon: 1e-7.
+- amsgrad: False.
+- weight_decay: None.
+- clipnorm: None.
+- global_clipnorm: None.
+- clipvalue: None.
+- use_ema: False.
+- gradient_accumulation_steps: None.
+
+Adam duy trì moving averages của gradient và squared gradient để điều chỉnh bước
+cập nhật riêng cho từng weight. Learning rate không có scheduler trong pipeline
+hiện tại và giữ cố định ở 0.001.
+
+
+19. METRICS THEO DÕI TRONG TRAINING
+----------------------------------------------------------------------
+
+Model theo dõi:
+
+- binary_accuracy.
+- precision.
+- recall.
+- PR-AUC.
+
+Các metric Keras binary_accuracy, precision và recall trong training history dùng
+threshold mặc định 0.5. Chúng không sử dụng selected threshold 0.9583 được chọn
+sau training.
+
+PR-AUC phù hợp hơn accuracy khi positive class ít hơn negative class. Tuy nhiên,
+callback early stopping vẫn monitor val_loss, không monitor val_pr_auc.
+
+
+20. MODEL.FIT SETTINGS
+----------------------------------------------------------------------
+
+Các argument chính:
+
+- X: X_train_array, dtype float32.
+- y: y_train_array, dtype float32.
+- validation_data: (X_validation_array, y_validation_array).
+- epochs: tối đa 100.
+- batch_size: 256.
+- class_weight: balanced weights từ training labels.
+- callbacks: EarlyStopping.
+- verbose: 1.
+
+Notebook không truyền shuffle argument, vì vậy Keras sử dụng mặc định
+shuffle=True cho training samples ở mỗi epoch. Chronological split vẫn được giữ
+nguyên; chỉ thứ tự mini-batch bên trong training set được trộn. Đây là cách dùng
+hợp lý với một feedforward MLP không có hidden state theo chuỗi.
+
+Với 22,628 training observations và batch size 256, mỗi epoch có khoảng 89
+mini-batches, trong đó batch cuối có thể nhỏ hơn 256.
+
+
+21. EARLY STOPPING
+----------------------------------------------------------------------
+
+Callback:
+
+- Monitor: val_loss.
+- Patience: 8 epochs.
+- Restore best weights: True.
+- Maximum training length: 100 epochs.
+
+Kết quả lần train hiện tại:
+
+- Training thực tế chạy 41 epochs.
+- val_loss tốt nhất xuất hiện tại epoch 33.
+- Tám epoch tiếp theo không tạo ra val_loss thấp hơn.
+- Training dừng ở epoch 41.
+- Model khôi phục weights của epoch 33.
+
+Metrics tại epoch 33:
+
+- Training loss: 0.099864.
+- Training binary accuracy: 0.982942.
+- Training precision: 0.961374.
+- Training recall: 0.942927.
+- Training PR-AUC: 0.976545.
+- Validation loss: 0.063227.
+- Validation binary accuracy: 0.989739.
+- Validation precision: 0.973520.
+- Validation recall: 0.942685.
+- Validation PR-AUC theo Keras: 0.984333.
+
+Validation PR-AUC cao nhất trong history xuất hiện ở epoch 18, khoảng 0.985110,
+nhưng model selection dùng val_loss nên weights cuối được lấy từ epoch 33.
+
+Training loss tiếp tục giảm đến epoch 41, còn validation loss tăng nhẹ từ 0.063227
+lên 0.064039. Đây là dấu hiệu overfitting nhẹ sau epoch 33 và đã được early
+stopping xử lý bằng restore_best_weights.
+
+
+22. CHỌN PREDICTION THRESHOLD
+----------------------------------------------------------------------
+
+Model sigmoid tạo probability score. Pipeline không mặc định sử dụng 0.5 cho kết
+quả cuối cùng.
+
+Quy trình threshold selection:
+
+1. Dùng model đã train để dự đoán probability trên validation set.
+2. Tạo precision-recall curve.
+3. Với mỗi threshold, tính:
+
+   F1 = 2 x precision x recall / (precision + recall)
+
+4. Chọn threshold có F1 validation cao nhất.
+5. Lưu threshold trong model_configuration.json.
+
+Selected threshold hiện tại:
+
+0.9583001137
+
+Validation metrics tại selected threshold:
+
+- Observations: 5,360.
+- Positive support: 663.
+- Predicted positive rate: 11.72%.
+- Accuracy: 99.16%.
+- Balanced accuracy: 96.93%.
+- Precision: 99.20%.
+- Recall: 93.97%.
+- F1-score: 96.51%.
+- Average Precision/PR-AUC: 97.91%.
+- ROC-AUC: 99.72%.
+- Confusion matrix: TN=4,692, FP=5, FN=40, TP=623.
+
+Threshold cao không đồng nghĩa probability đã được calibration. Class weighting
+có thể làm sigmoid scores không phản ánh xác suất thực tế theo tần suất quan sát.
+Threshold này phù hợp với mục tiêu tối đa F1 trên validation hiện tại.
+
+
+23. FINAL TEST EVALUATION
+----------------------------------------------------------------------
+
+Test set không tham gia training, scaler fitting, class weight calculation hoặc
+threshold selection.
+
+Quy tắc chuyển probability thành class:
+
+predicted_congestion = 1 nếu probability >= 0.9583001137
+predicted_congestion = 0 nếu probability < 0.9583001137
+
+Kết quả test:
+
+- Observations: 5,532.
+- Positive support: 677.
+- Negative support: 4,855.
+- Predicted positives: 623.
+- Accuracy: 98.66%.
+- Balanced accuracy: 95.17%.
+- Precision: 98.39%.
+- Recall: 90.55%.
+- F1-score: 94.31%.
+- Average Precision/PR-AUC: 97.32%.
+- ROC-AUC: 99.57%.
+- Specificity: 99.79%.
+
+Confusion matrix:
+
+                  Predicted 0    Predicted 1
+Actual 0              4,845             10
+Actual 1                 64            613
+
+Diễn giải:
+
+- Trong 623 cảnh báo congestion, 613 cảnh báo đúng.
+- Chỉ có 10 false alarms.
+- Model phát hiện 613/677 congestion cases.
+- Model bỏ sót 64/677 cases, tương đương khoảng 9.45% positive cases.
+
+Accuracy của baseline luôn dự đoán 0 là khoảng 87.76%, nên accuracy 98.66% là cải
+thiện rõ rệt. PR-AUC và F1 cũng cho thấy model không chỉ đạt accuracy cao nhờ class
+imbalance.
+
+
+24. DATASET LIMITATION KHI DIỄN GIẢI TEST
+----------------------------------------------------------------------
+
+Trong validation và test, chỉ Dock 1 có arrivals và congestion. Dock 2, 3 và 4
+không có positive samples:
+
+Dock    Test observations    Test congestion
+----    -----------------    ---------------
+1       1,383                677
+2       1,383                  0
+3       1,383                  0
+4       1,383                  0
+
+Do đó:
+
+- Global metrics có bằng chứng mạnh nhất cho Dock 1.
+- Không thể đánh giá recall hoặc F1 cho congestion tại Dock 2-4.
+- Các dòng Dock 2-4 trong test là zero-arrival, non-congestion rows tương đối dễ.
+- Xét riêng Dock 1, accuracy khoảng 94.65%, precision 98.39%, recall 90.55%, F1
+  94.31% và PR-AUC 97.32%.
+
+Model hiện tại rất tốt đối với target mô phỏng và test hiện tại, nhưng chưa đủ dữ
+liệu để chứng minh generalization cho congestion tại cả bốn dock.
+
+
+25. KIỂM SOÁT DATA LEAKAGE
+----------------------------------------------------------------------
+
+Pipeline hiện tại có các kiểm soát sau:
+
+- Rolling mean chỉ dùng interval hiện tại và quá khứ.
+- Future queue chỉ dùng để tạo target, không dùng làm feature.
+- Chronological split thay cho random split.
+- Có one-hour boundary gaps giữa train-validation và validation-test.
+- Service rate chỉ dùng dữ liệu trước validation.
+- StandardScaler chỉ fit trên X_train.
+- Class weights chỉ tính từ y_train.
+- Prediction threshold chỉ chọn từ validation.
+- Test chỉ dùng cho final evaluation.
+
+Không có dấu hiệu target leakage trực tiếp trong bảy model features theo pipeline
+hiện tại.
+
+
+26. MODEL ARTIFACTS
+----------------------------------------------------------------------
+
+Sau training, notebook tạo thư mục model_outputs và lưu:
+
+1. mlp_congestion.keras
+   - Kiến trúc model.
+   - Trained weights.
+   - Compile/optimizer configuration.
+
+2. feature_scaler.pkl
+   - StandardScaler đã fit trên training numeric features.
+
+3. model_configuration.json
+   - Feature names và đúng thứ tự.
+   - Numeric feature names.
+   - Interval duration.
+   - Prediction horizon.
+   - Buffer capacity.
+   - Service margin và service rates.
+   - Congestion threshold.
+   - Selected prediction threshold.
+   - Training/validation boundaries.
+   - Random seed.
+
+4. training_history.csv
+   - Loss và metrics cho toàn bộ 41 epochs.
+
+5. test_predictions.csv
+   - Metadata của từng test observation.
+   - Ground-truth congestion.
+   - Predicted probability.
+   - Predicted congestion.
+
+Toàn bộ artifacts được nén thành:
+
+mlp_congestion_results.zip
+
+
+27. CÁCH TÁI HUẤN LUYỆN
+----------------------------------------------------------------------
+
+Trong VS Code:
+
+1. Mở MLP_inbound_congestion_training.ipynb.
+2. Chọn kernel .venv/bin/python.
+3. Chọn Restart Kernel and Clear All Outputs nếu muốn một run hoàn toàn mới.
+4. Nhấn Run All.
+5. Không thay đổi hoặc đánh giá lại threshold bằng test set.
+6. Kiểm tra model_outputs sau khi notebook hoàn thành.
+
+Nếu chạy bằng terminal sau khi kích hoạt .venv:
+
+source .venv/bin/activate
+jupyter lab
+
+Sau đó mở notebook trong giao diện Jupyter và chọn Run All Cells.
+
+Một lần chạy mới sẽ ghi đè các artifacts cùng tên trong model_outputs và tạo lại
+mlp_congestion_results.zip.
+
+
+28. ĐÁNH GIÁ TỔNG QUÁT
+----------------------------------------------------------------------
+
+Các điểm mạnh của training pipeline:
+
+- Đúng bài toán binary classification theo horizon 60 phút.
+- Chia dữ liệu theo thời gian và có boundary gaps.
+- Không fit scaler hoặc class weights trên validation/test.
+- Service rate riêng cho từng dock.
+- Queue được giới hạn đúng buffer capacity.
+- Có xử lý class imbalance.
+- Có Dropout và early stopping.
+- Threshold được tối ưu trên validation thay vì test.
+- Lưu đầy đủ model, scaler, config, history và predictions.
+- Kết quả test có precision, recall, F1 và PR-AUC rất cao.
+
+Các hạn chế:
+
+- Target là queue simulation, không phải ground-truth congestion.
+- Buffer capacity và service rate là giả định.
+- Validation/test không có congestion tại Dock 2-4.
+- Probability chưa được calibration.
+- Feature set chưa chứa hour/shift, trạng thái robot hoặc service completion.
+- MLP coi các observation là độc lập; nó không học một hidden state tuần tự như
+  RNN/LSTM, dù rolling feature và queue feature đã cung cấp lịch sử ngắn hạn.
+
+
+29. KẾT LUẬN
+----------------------------------------------------------------------
+
+Model MLP hiện tại là một baseline nhỏ gọn với 801 trainable parameters. Nó dùng
+ba numeric operational features và bốn dock one-hot features. Training sử dụng
+Adam learning rate 0.001, weighted binary cross-entropy, batch size 256, Dropout
+20% và early stopping patience 8.
+
+Lần train hiện tại chạy 41 epoch, chọn weights từ epoch 33 và chọn threshold
+0.9583001137 bằng validation F1. Test F1 đạt 94.31%, precision 98.39%, recall
+90.55% và PR-AUC 97.32%.
+
+Kết quả này cho thấy model học rất tốt target congestion mô phỏng trong phạm vi
+dữ liệu hiện tại. Tuy nhiên, kết luận về khả năng áp dụng cho bốn dock hoặc cho
+congestion thực tế phải được giới hạn do thiếu positive support ở Dock 2-4 và do
+target phụ thuộc vào queue/service assumptions.
+
+
+PHỤ LỤC A. CẤU HÌNH MODEL HIỆN TẠI
+----------------------------------------------------------------------
+
+feature_names:
+  - buffer_fill_ratio
+  - arrivals_15m
+  - mean_arrivals_60m
+  - dock_1
+  - dock_2
+  - dock_3
+  - dock_4
+
+numeric_feature_names:
+  - buffer_fill_ratio
+  - arrivals_15m
+  - mean_arrivals_60m
+
+interval_duration_seconds: 900
+prediction_horizon_intervals: 4
+prediction_horizon_minutes: 60
+buffer_capacity_per_dock: 20
+service_capacity_margin: 0.1
+service_rate_by_dock:
+  dock_1: 25
+  dock_2: 2
+  dock_3: 1
+  dock_4: 1
+congestion_threshold: 0.8
+congestion_level_pallets: 16.0
+selected_prediction_threshold: 0.9583001136779785
+training_end_day: 60
+validation_end_day: 74
+random_seed: 42
+
+
+PHỤ LỤC B. CHECKLIST TRAINING HỢP LỆ
+----------------------------------------------------------------------
+
+[OK] arrival_time và dock không missing.
+[OK] Dock chỉ thuộc {1, 2, 3, 4}.
+[OK] Mỗi interval sau zero filling có đủ bốn dock.
+[OK] arrivals_15m không âm.
+[OK] queue_length nằm trong [0, 20].
+[OK] buffer_fill_ratio nằm trong [0, 1].
+[OK] Service rate chỉ dùng period trước validation.
+[OK] Rolling feature không dùng future data.
+[OK] Congestion target chỉ dùng bốn future intervals.
+[OK] Training label không đi qua validation boundary.
+[OK] Validation label không đi qua test boundary.
+[OK] Scaler chỉ fit trên training data.
+[OK] Class weights chỉ tính bằng training labels.
+[OK] Threshold chỉ chọn bằng validation data.
+[OK] Test không tham gia model hoặc threshold selection.
+[OK] Model, scaler, config, history và predictions đã được lưu.
+
+Hết báo cáo.

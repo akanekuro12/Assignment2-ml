@@ -1,0 +1,503 @@
+BÁO CÁO PHÂN TÍCH DATASET WEPASTACKS INBOUND
+============================================================
+
+File dữ liệu: wepastacks_inbound_clean.csv
+Quy mô: 205,258 pallet events
+Khoảng thời gian: ngày tương đối 2 đến ngày 89
+Mục đích phân tích: đánh giá đặc trưng dữ liệu, các vấn đề có thể ảnh hưởng
+đến mô hình MLP dự đoán congestion trong 60 phút tiếp theo.
+
+
+1. TÓM TẮT ĐIỀU HÀNH
+------------------------------------------------------------
+
+Dataset có chất lượng kỹ thuật cơ bản tốt:
+
+- Không có missing value ở bất kỳ cột nào.
+- Không có dòng trùng lặp hoàn toàn.
+- arrival_time đều không âm.
+- dock chỉ chứa đúng bốn giá trị 1, 2, 3 và 4.
+- Các cột day, hour, minute và time_bin_15m nhất quán với arrival_time.
+
+Tuy nhiên, dataset có một số hạn chế quan trọng về tính đại diện:
+
+1. Dock 1 chiếm 93.26% tổng số pallet.
+2. Dock 2, 3 và 4 chỉ xuất hiện trong một phần rất ngắn của timeline.
+3. Sau ngày 39, toàn bộ pallet trong dữ liệu đều đi qua Dock 1.
+4. Validation và test không có pallet hoặc congestion tại Dock 2, 3 và 4.
+5. Việc bổ sung zero-arrival intervals đang coi các dock không còn xuất hiện
+   như những dock vẫn hoạt động nhưng không nhận pallet.
+6. Nhãn congestion được tạo bằng queue mô phỏng, không phải congestion được
+   quan sát trong vận hành thực tế.
+7. Service rate và buffer capacity là giả định mô phỏng; kết quả mô hình phụ
+   thuộc mạnh vào các giả định này.
+
+Kết quả test của MLP rất tốt đối với target mô phỏng hiện tại, nhưng chưa chứng
+minh rằng mô hình có thể dự đoán congestion thực tế cho cả bốn dock. Kết quả chủ
+yếu phản ánh khả năng dự đoán Dock 1 và nhận biết các dòng zero của Dock 2-4.
+
+
+2. CẤU TRÚC DATASET
+------------------------------------------------------------
+
+Dataset có 205,258 dòng và 9 cột:
+
+- arrival_time: thời điểm pallet đến, tính bằng giây.
+- day: ngày tương đối trong dữ liệu.
+- hour: giờ trong ngày.
+- minute: phút trong giờ.
+- time_bin_15m: khoảng thời gian 15 phút.
+- dock: cửa nhập kho.
+- sku: mã sản phẩm.
+- batch: mã lô.
+- week: tuần tương đối.
+
+Số giá trị khác nhau:
+
+- day: 88 giá trị, từ 2 đến 89.
+- hour: 24 giá trị, từ 0 đến 23.
+- minute: 60 giá trị, từ 0 đến 59.
+- time_bin_15m có event: 6,860 giá trị, từ 96 đến 8,490.
+- dock: 4 giá trị.
+- sku: 121 giá trị, mã nằm trong khoảng 2 đến 136.
+- batch: 1,497 giá trị, mã nằm trong khoảng 1 đến 1,498.
+- week: 14 giá trị.
+
+Khoảng quan sát liên tục từ time bin 96 đến 8,490 có 8,395 khoảng 15 phút.
+Trong đó có 1,535 khoảng, tương đương 18.28%, không có event ở bất kỳ dock nào.
+
+Dữ liệu bắt đầu tại giây 86,466, tức ngày tương đối thứ 2. Không có dữ liệu của
+ngày 1. Điều này có thể là chủ ý của quá trình tiền xử lý, nhưng cần được ghi lại
+trong mô tả nguồn dữ liệu.
+
+
+3. KIỂM TRA CHẤT LƯỢNG DỮ LIỆU CƠ BẢN
+------------------------------------------------------------
+
+3.1. Missing và giá trị không hợp lệ
+
+- Missing arrival_time: 0.
+- Missing dock: 0.
+- Missing ở các cột còn lại: 0.
+- arrival_time âm: 0.
+- Dock ngoài tập {1, 2, 3, 4}: 0.
+
+3.2. Dòng trùng lặp
+
+- Dòng trùng hoàn toàn: 0.
+- Có 4,763 trường hợp trùng tổ hợp arrival_time và dock.
+
+Các trường hợp trùng arrival_time và dock không nhất thiết là lỗi, vì nhiều
+pallet có thể đến cùng dock trong cùng một giây và các dòng có thể khác sku hoặc
+batch. Tuy nhiên, dataset không có event_id độc lập, vì vậy không thể xác minh
+tuyệt đối rằng đây là các pallet riêng biệt. Nên bổ sung event_id từ hệ thống
+nguồn nếu dữ liệu được dùng ngoài phạm vi assignment.
+
+3.3. Tính nhất quán của biến thời gian
+
+Khi tính lại từ arrival_time:
+
+- day khớp 100%.
+- hour khớp 100%.
+- minute khớp 100%.
+- time_bin_15m khớp 100%.
+
+Week sử dụng cách chia tuần riêng: week 1 chỉ chứa ngày 2, week 2 chứa ngày 3-9,
+week 3 chứa ngày 10-16, v.v. Mỗi day chỉ thuộc đúng một week, nên cột này nhất
+quán nội bộ, dù không bắt đầu bằng một tuần đủ bảy ngày.
+
+
+4. MẤT CÂN BẰNG GIỮA CÁC DOCK
+------------------------------------------------------------
+
+Phân bố pallet ban đầu:
+
+Dock    Số pallet    Tỷ lệ
+----    ---------    -------
+1       191,428      93.26%
+2         5,902       2.88%
+3         4,421       2.15%
+4         3,507       1.71%
+
+Dock 1 có lượng pallet lớn gấp khoảng 32 lần Dock 2, 43 lần Dock 3 và 55 lần
+Dock 4. Đây là đặc trưng đã được specification ghi nhận, không tự động đồng nghĩa
+với lỗi dữ liệu. Tuy nhiên, mức lệch này làm cho mô hình tổng hợp chủ yếu học hành
+vi của Dock 1.
+
+Class weight chỉ cân bằng congestion và non-congestion. Nó không cân bằng số
+event, độ dài lịch sử hoặc mức đại diện giữa các dock.
+
+
+5. PHẠM VI THỜI GIAN CỦA TỪNG DOCK
+------------------------------------------------------------
+
+Dock    Ngày đầu    Ngày cuối    Số ngày thực sự có event
+----    --------    ---------    -------------------------
+1       2           89           88
+2       2           39           12
+3       2           18            8
+4       2           11            5
+
+Dock 1 có dữ liệu liên tục trong mọi ngày từ 2 đến 89. Ba dock còn lại rất rời
+rạc:
+
+- Dock 2 có event ở ngày 2-8, 10, 12, 17, 20 và 39.
+- Dock 3 có event ở ngày 2-7, 10 và 18.
+- Dock 4 có event ở ngày 2-4, 8 và 11.
+
+Sau ngày 39, chỉ còn Dock 1 có event. Đây là dấu hiệu temporal coverage shift rất
+lớn. Có ít nhất ba cách giải thích cần được xác minh với nguồn dữ liệu:
+
+- Đây là thay đổi vận hành thực tế và các dock khác đã ngừng hoạt động.
+- Dataset chỉ ghi nhận đầy đủ Dock 1 trong phần sau của timeline.
+- Dữ liệu của các dock được ghép từ các giai đoạn/scenario khác nhau thay vì bốn
+  dock thực sự hoạt động song song trong toàn bộ 89 ngày.
+
+Không thể xác định giải thích nào đúng chỉ từ file CSV hiện tại.
+
+
+6. ĐẶC TRƯNG ARRIVAL THEO KHOẢNG 15 PHÚT
+------------------------------------------------------------
+
+Sau khi tạo grid đầy đủ gồm 8,395 interval cho mỗi dock:
+
+Dock   Mean    Median   P95    Max    Tỷ lệ zero interval
+----   ------  ------   ----   ---    --------------------
+1      22.803  20       52     110    20.25%
+2       0.703   0        8      15    92.65%
+3       0.527   0        7      15    94.78%
+4       0.418   0        0      15    95.83%
+
+Các mean của Dock 2-4 trên toàn timeline rất thấp vì bao gồm hàng nghìn interval
+sau khi các dock không còn xuất hiện. Nếu chỉ xét từ event đầu đến event cuối của
+từng dock:
+
+Dock   Mean active-range   P95   Max   Zero trong active range
+----   -----------------   ---   ---   ------------------------
+1      22.803              52    110   20.25%
+2       1.618              10     15   83.09%
+3       2.746              13     15   72.80%
+4       3.653              14     15   63.54%
+
+Điều này cho thấy hai loại zero đang bị trộn với nhau:
+
+1. Dock đang hoạt động nhưng không có pallet trong interval.
+2. Dock không còn được quan sát hoặc không còn hoạt động trong dataset.
+
+Hai trạng thái này khác nhau về mặt vận hành nhưng pipeline hiện tại biểu diễn
+chúng giống nhau bằng arrivals_15m = 0.
+
+Arrival có tính burst rõ rệt. Ví dụ, Dock 1 trung bình khoảng 22.8 pallet/15 phút
+nhưng có interval đạt 110 pallet. Vì vậy mean đơn lẻ không mô tả đầy đủ tải đỉnh.
+
+
+7. MẪU HÌNH THEO GIỜ TRONG NGÀY
+------------------------------------------------------------
+
+Phần lớn pallet xuất hiện trong nửa đầu ngày:
+
+Dock   00:00-11:59   12:00-17:59   18:00-23:59
+----   -----------   -----------   -----------
+1      75.98%        17.47%         6.55%
+2      74.21%        18.30%         7.49%
+3      76.86%        21.60%         1.54%
+4      61.33%        26.38%        12.29%
+
+Đây là seasonality theo giờ khá mạnh. MLP hiện tại không dùng hour hoặc biến chu
+kỳ sin/cos của hour, nên phải suy ra tải sắp tới hoàn toàn từ arrivals gần đây và
+queue hiện tại. Việc bổ sung time-of-day có thể hữu ích trong phiên bản mở rộng,
+nhưng nằm ngoài bộ bảy feature được specification yêu cầu.
+
+
+8. ĐẶC TRƯNG SKU VÀ BATCH
+------------------------------------------------------------
+
+- Có 121 SKU.
+- Có 1,497 batch.
+- 79/121 SKU chỉ xuất hiện tại đúng một dock.
+- 24 SKU xuất hiện tại hai dock.
+- 15 SKU xuất hiện tại ba dock.
+- Chỉ 3 SKU xuất hiện ở cả bốn dock.
+- Toàn bộ 1,497 batch chỉ xuất hiện tại một dock duy nhất.
+
+Do đó, sku và batch có quan hệ rất mạnh với dock. Nếu thêm trực tiếp các trường
+này vào mô hình, mô hình có thể học thuộc quan hệ routing/dock thay vì học động
+lực congestion. Batch còn có cardinality cao và nhiều batch ít event, làm tăng
+nguy cơ overfitting.
+
+Việc phiên bản MLP hiện tại không dùng sku, batch và week là lựa chọn hợp lý cho
+baseline. Nếu sử dụng trong tương lai, cần encoding phù hợp, kiểm tra feature
+leakage và đánh giá trên batch/SKU chưa xuất hiện trong training.
+
+
+9. SERVICE RATE VÀ ẢNH HƯỞNG CỦA ZERO INTERVAL
+------------------------------------------------------------
+
+Service rate được tính theo specification bằng toàn bộ interval có day <= 60,
+bao gồm cả zero interval:
+
+Dock   Mean arrivals/15m trong period <= 60   Service rate
+----   ------------------------------------   ------------
+1      22.6916                                25
+2       1.0420                                 2
+3       0.7805                                 1
+4       0.6192                                 1
+
+Các giá trị này đúng với specification. Tuy nhiên, mean của Dock 2-4 bị kéo xuống
+bởi thời gian dài không có event sau ngày hoạt động cuối cùng. Ví dụ, Dock 4 chỉ
+có event đến ngày 11 nhưng service rate được tính trên timeline đến ngày 60.
+
+Nếu zero sau ngày dock ngừng xuất hiện thực chất là "dock inactive" hoặc "missing
+coverage", service rate ước tính sẽ không phản ánh năng lực phục vụ khi dock hoạt
+động. Service rate thấp làm queue mô phỏng tăng nhanh hơn và tạo thêm nhãn
+congestion trong training.
+
+Đây không phải data leakage vì service rate vẫn chỉ dùng training period, nhưng
+là một rủi ro về sai lệch định nghĩa và giả định mô phỏng.
+
+
+10. QUEUE VÀ TARGET CONGESTION LÀ DỮ LIỆU MÔ PHỎNG
+------------------------------------------------------------
+
+Dataset chỉ ghi nhận pallet arrival. Nó không có:
+
+- Queue thực tế tại dock.
+- Thời điểm pallet được xử lý xong.
+- Năng lực robot thực tế theo thời gian.
+- Trạng thái dock active/inactive.
+- Downtime, bảo trì hoặc sự cố.
+- Buffer capacity thực tế.
+- Congestion label được quan sát trực tiếp.
+
+Queue và congestion được suy ra từ các giả định:
+
+- Buffer capacity: 20 pallet/dock.
+- Congestion threshold: 80%, tương đương queue >= 16.
+- Service capacity margin: 10%.
+- Service rate cố định cho mỗi dock.
+- Prediction horizon: 60 phút.
+
+Do đó, mô hình đang học cách dự đoán kết quả của queue simulator dựa trên chính
+arrival data, không phải học congestion thực được ghi nhận tại kho. Kết quả cao
+là hợp lý vì target và feature có cùng nguồn thông tin và có quan hệ xác định.
+
+Kết quả queue mô phỏng trên toàn bộ model table:
+
+Dock   Mean queue   % interval queue=20   % interval overflow   Overflow pallet
+----   ----------   -------------------   -------------------   ---------------
+1       9.027       41.32%                40.84%                54,528
+2       1.562        7.00%                 6.97%                 4,414
+3       1.208        5.06%                 5.03%                 3,802
+4       0.935        4.05%                 4.05%                 3,060
+
+Tỷ lệ queue đầy và overflow của Dock 1 rất cao. Điều này nên được đối chiếu với
+thực tế vận hành; nếu kho thực không thường xuyên overflow ở mức này thì buffer
+capacity hoặc service rate giả định có thể chưa hợp lý.
+
+
+11. CHRONOLOGICAL SPLIT VÀ PHÂN BỐ TARGET
+------------------------------------------------------------
+
+Pipeline chia theo thời gian và có khoảng cách một giờ tại ranh giới, đúng với
+yêu cầu tránh future target đi qua tập tiếp theo:
+
+Split         Số mẫu   Congestion   Tỷ lệ congestion
+----------    -------   ----------   -----------------
+Training       22,628       4,065        17.96%
+Validation      5,360         663        12.37%
+Test            5,532         677        12.24%
+
+Phân bố congestion theo dock:
+
+Split         Dock 1       Dock 2       Dock 3       Dock 4
+----------    --------     --------     --------     --------
+Training      2568/5657     647/5657     476/5657     374/5657
+Validation     663/1340       0/1340       0/1340       0/1340
+Test           677/1383       0/1383       0/1383       0/1383
+
+Trong đó dạng a/b nghĩa là a mẫu congestion trên b mẫu của dock.
+
+Training có congestion ở cả bốn dock, nhưng validation và test chỉ có congestion
+ở Dock 1. Đây là domain/coverage shift giữa training và các tập đánh giá.
+
+Việc mỗi dock có số dòng bằng nhau trong model table không có nghĩa dữ liệu cân
+bằng. Các dòng Dock 2-4 trong validation/test được tạo từ zero-arrival intervals,
+không phải từ hoạt động inbound thực tế.
+
+
+12. ẢNH HƯỞNG ĐẾN KẾT QUẢ MLP HIỆN TẠI
+------------------------------------------------------------
+
+Kết quả test hiện tại:
+
+- Accuracy: 98.66%.
+- Balanced accuracy: 95.17%.
+- Precision: 98.39%.
+- Recall: 90.55%.
+- F1-score: 94.31%.
+- PR-AUC/Average Precision: 97.32%.
+- ROC-AUC: 99.57%.
+- Confusion matrix: TN=4,845, FP=10, FN=64, TP=613.
+
+Kết quả này rất tốt đối với target mô phỏng. Training cũng không cho thấy
+overfitting nghiêm trọng: epoch tốt nhất theo validation loss là epoch 33,
+validation loss khoảng 0.0632 và validation PR-AUC khoảng 0.9843.
+
+Tuy nhiên, cần diễn giải metrics thận trọng:
+
+- Baseline luôn dự đoán 0 đã đạt accuracy khoảng 87.76% do class imbalance.
+- 4,149/5,532 dòng test thuộc Dock 2-4 và đều là non-congestion.
+- Các dòng này làm accuracy tổng thể cao hơn và không kiểm tra khả năng phát hiện
+  congestion tại Dock 2-4.
+- Xét riêng Dock 1, accuracy khoảng 94.65%, F1 khoảng 94.31% và PR-AUC khoảng
+  97.32%. Vì vậy kết quả tốt không hoàn toàn do các dòng zero, nhưng bằng chứng
+  chỉ mạnh cho Dock 1.
+- Threshold được chọn là khoảng 0.9583. Do model sử dụng class weights và tối ưu
+  threshold theo F1, predicted_probability không nên được hiểu trực tiếp là xác
+  suất thực tế đã được calibration.
+
+Không thể tính recall, F1 hay ROC-AUC có ý nghĩa cho Dock 2-4 trong test vì mỗi
+dock chỉ có một target class.
+
+
+13. DANH SÁCH VẤN ĐỀ THEO MỨC ĐỘ ƯU TIÊN
+------------------------------------------------------------
+
+[NGHIÊM TRỌNG] P1. Thiếu coverage theo thời gian ở Dock 2-4
+
+Dock 2-4 biến mất sớm và không xuất hiện trong validation/test. Mô hình bốn dock
+không được đánh giá độc lập trên congestion tương lai của ba dock này.
+
+[NGHIÊM TRỌNG] P2. Inactive/missing bị biểu diễn như zero demand
+
+Pipeline không có biến dock_active. Zero do không có pallet và zero do không có
+coverage bị coi là giống nhau, ảnh hưởng service rate, queue và target.
+
+[CAO] P3. Target là kết quả mô phỏng, không phải ground truth
+
+Mô hình chỉ được chứng minh là dự đoán tốt một simulator với các giả định hiện
+tại. Chưa có bằng chứng tương đương cho congestion thực tế.
+
+[CAO] P4. Mất cân bằng rất lớn giữa các dock
+
+93.26% pallet thuộc Dock 1. Shared MLP chủ yếu được tối ưu theo pattern Dock 1.
+
+[CAO] P5. Service rate bị ảnh hưởng bởi zero sau thời gian hoạt động
+
+Service rate Dock 2-4 có thể bị đánh giá thấp nếu các zero dài hạn không phải
+thời gian dock thực sự online.
+
+[TRUNG BÌNH] P6. Metrics tổng hợp che giấu thiếu support theo dock
+
+Global accuracy/ROC-AUC không thể thay thế báo cáo support và metrics riêng cho
+từng dock.
+
+[TRUNG BÌNH] P7. Thiếu biến vận hành quan trọng
+
+Không có trạng thái robot, lịch ca, downtime, pallet departures hoặc queue thật.
+Khả năng giải thích congestion thực tế bị giới hạn.
+
+[THẤP/TRUNG BÌNH] P8. Không có event_id
+
+Không thể xác minh hoàn toàn 4,763 trường hợp cùng arrival_time và dock là các
+pallet độc lập, dù không có dòng nào trùng hoàn toàn.
+
+
+14. KHUYẾN NGHỊ
+------------------------------------------------------------
+
+14.1. Việc cần làm trước tiên
+
+1. Xác minh với nguồn dữ liệu vì sao Dock 4 kết thúc ở ngày 11, Dock 3 ở ngày 18
+   và Dock 2 ở ngày 39.
+2. Xác định mỗi zero interval có nghĩa là dock online nhưng không có pallet, hay
+   dock inactive/không được ghi nhận.
+3. Nếu có thể, bổ sung trường dock_active hoặc lịch hoạt động của dock.
+4. Kiểm tra xem bốn dock có thực sự hoạt động song song trong cùng timeline hay
+   dữ liệu được ghép từ nhiều scenario/giai đoạn.
+
+14.2. Cải thiện target và queue simulation
+
+1. Thu thập queue_length, pallet departure/service completion và congestion thật.
+2. Xác minh buffer capacity 20 và threshold 80% với vận hành thực tế.
+3. Ước tính service rate từ thời gian dock thực sự active, nhưng vẫn chỉ dùng
+   training data để tránh leakage.
+4. Thực hiện sensitivity analysis với nhiều buffer capacity, service margin,
+   congestion threshold và prediction horizon.
+5. So sánh congestion mô phỏng với bất kỳ incident/downtime log thực tế nào.
+
+14.3. Cải thiện chiến lược đánh giá
+
+1. Tiếp tục dùng chronological split; không chuyển sang random split.
+2. Báo cáo metrics riêng cho từng dock và luôn kèm số positive/negative support.
+3. Không tính performance của một dock khi test chỉ có một class; ghi rõ là
+   "không đủ dữ liệu đánh giá".
+4. Nếu mục tiêu là một model cho bốn dock, cần thu thập thêm giai đoạn tương lai
+   có hoạt động và congestion tại Dock 2-4.
+5. Nếu dữ liệu bổ sung không khả thi, nên giới hạn kết luận hiện tại cho Dock 1.
+6. Sau khi thay đổi pipeline dựa trên kết quả test hiện tại, cần giữ một tập test
+   mới, chưa từng được dùng để quyết định model hoặc threshold.
+
+14.4. Cải thiện feature trong phiên bản mở rộng
+
+Ngoài baseline bảy feature theo specification, có thể thử:
+
+- Hour dạng sin/cos để biểu diễn chu kỳ 24 giờ.
+- Day-of-week hoặc shift vận hành.
+- Tổng, max, standard deviation và trend của arrivals trong 30-120 phút gần nhất.
+- Dock active/inactive.
+- Thời gian kể từ pallet gần nhất.
+- Mix SKU gần đây, sau khi xử lý cardinality và kiểm tra leakage.
+- Trạng thái robot, downtime và service completion nếu có.
+
+Mọi feature mới phải chỉ sử dụng thông tin có sẵn tại thời điểm dự đoán.
+
+14.5. Cải thiện cách sử dụng output
+
+1. Nếu cần xác suất có ý nghĩa, đánh giá probability calibration trên validation
+   bằng reliability curve/Brier score và cân nhắc calibration phù hợp.
+2. Chọn threshold theo chi phí vận hành: false negative có thể nghiêm trọng hơn
+   false positive. Không bắt buộc tối ưu F1 nếu mục tiêu ưu tiên recall.
+3. Không chọn lại threshold bằng test set.
+
+
+15. KẾT LUẬN
+------------------------------------------------------------
+
+Dataset sạch về mặt định dạng và phù hợp để xây dựng một baseline MLP theo đúng
+specification. Pipeline hiện tại xử lý đúng time-series split, zero intervals,
+rolling features, service rate theo training period và future target horizon.
+
+Vấn đề lớn nhất không nằm ở cú pháp hoặc quy trình train mà nằm ở tính đại diện
+của dữ liệu: Dock 1 chiếm gần như toàn bộ pallet và là dock duy nhất xuất hiện
+trong validation/test. Dock 2-4 không có đủ dữ liệu tương lai để đánh giá.
+
+Do đó, kết luận phù hợp nhất là:
+
+- Mô hình hiện tại dự đoán rất tốt congestion mô phỏng trên test hiện tại.
+- Có bằng chứng mạnh nhất cho Dock 1.
+- Chưa có bằng chứng rằng mô hình hoạt động tốt khi Dock 2-4 phát sinh congestion.
+- Chưa thể suy rộng trực tiếp sang congestion thực tế vì queue và target được tạo
+  từ các giả định mô phỏng.
+
+Đối với assignment, kết quả và pipeline là hợp lệ theo specification. Đối với
+triển khai thực tế, cần ưu tiên xác minh coverage của Dock 2-4, phân biệt dock
+inactive với zero demand và thu thập ground-truth queue/congestion.
+
+
+PHỤ LỤC: CÁC CON SỐ THAM CHIẾU CHÍNH
+------------------------------------------------------------
+
+- Raw events: 205,258.
+- Continuous 15-minute intervals: 8,395.
+- Dock-interval rows sau zero filling: 33,580.
+- Model rows đủ rolling và future horizon: 33,552.
+- Training observations: 22,628.
+- Validation observations: 5,360.
+- Test observations: 5,532.
+- Overall modeled congestion rate: khoảng 16.13%.
+- Service rates: Dock 1=25, Dock 2=2, Dock 3=1, Dock 4=1.
+- Congestion level: queue >= 16/20 pallet trong bốn future intervals.
+- Selected prediction threshold: khoảng 0.9583.
+
+Hết báo cáo.

@@ -1,0 +1,625 @@
+IMPLEMENTATION SPECIFICATION
+WEPASTACKS INBOUND CONGESTION PREDICTION USING MLP
+
+
+1. MỤC TIÊU
+
+Xây dựng một mô hình Multilayer Perceptron, gọi tắt là MLP, để dự đoán nguy cơ tắc nghẽn tại bốn cửa nhập của kho WEPAStacks.
+
+Mỗi lần dự đoán được thực hiện ở cuối một khoảng thời gian 15 phút. Mô hình cần trả lời câu hỏi: trong 60 phút tiếp theo, buffer tại cửa nhập này có đạt ít nhất 80% sức chứa hay không?
+
+Đây là bài toán binary classification:
+
+- congestion = 1: có nguy cơ tắc nghẽn.
+- congestion = 0: không có nguy cơ tắc nghẽn.
+
+Phần này chỉ bao gồm xử lý dữ liệu, tạo nhãn, huấn luyện và đánh giá MLP. Chưa bao gồm Genetic Algorithm.
+
+
+2. DỮ LIỆU ĐẦU VÀO
+
+2.1. File sử dụng
+
+File chính:
+
+wepastacks_inbound_clean.csv
+
+Mỗi dòng trong file đại diện cho một pallet được đưa từ dây chuyền sản xuất đến một trong bốn cửa nhập.
+
+2.2. Các cột đầu vào
+
+File cần có tối thiểu hai cột:
+
+- arrival_time
+- dock
+
+File sạch hiện tại có các cột:
+
+- arrival_time
+- day
+- hour
+- minute
+- time_bin_15m
+- dock
+- sku
+- batch
+- week
+
+Ý nghĩa:
+
+- arrival_time: thời điểm pallet đến, tính bằng số giây từ thời điểm bắt đầu dữ liệu.
+- day: ngày tương đối trong bộ dữ liệu.
+- hour: giờ trong ngày.
+- minute: phút trong giờ.
+- time_bin_15m: mã khoảng thời gian 15 phút.
+- dock: cửa nhập, nhận một trong bốn giá trị 1, 2, 3, 4.
+- sku: mã sản phẩm.
+- batch: mã lô sản xuất.
+- week: tuần trong dữ liệu.
+
+Nếu file vẫn còn cột type, chỉ giữ những dòng thỏa mãn type = delivery.
+
+2.3. Giá trị kiểm tra tham khảo
+
+File hiện tại có khoảng 205,258 inbound pallet events.
+
+Phân bố theo cửa:
+
+- Dock 1: 191,428 pallets.
+- Dock 2: 5,902 pallets.
+- Dock 3: 4,421 pallets.
+- Dock 4: 3,507 pallets.
+
+Dock 1 có nhiều pallet hơn đáng kể. Đây là đặc điểm của dữ liệu, không nhất thiết là lỗi.
+
+
+3. CÁC THAM SỐ CẤU HÌNH
+
+Sử dụng các tham số ban đầu sau:
+
+- Random seed: 42.
+- Interval duration: 900 seconds.
+- Prediction horizon: 4 intervals.
+- Prediction horizon duration: 60 minutes.
+- Inbound docks: 1, 2, 3, 4.
+- Buffer capacity: 20 pallets per dock.
+- Congestion threshold: 80%.
+- Service capacity margin: 10%.
+- Training end day: 60.
+- Validation end day: 74.
+- Maximum training epochs: 100.
+- Batch size: 256.
+- Learning rate: 0.001.
+- Early stopping patience: 8 epochs.
+
+Các giá trị buffer capacity, service capacity margin, congestion threshold và prediction horizon là giả định mô phỏng, không phải thông tin thật từ WEPAStacks. Các giá trị này phải được lưu trong file cấu hình của model để bảo đảm thí nghiệm có thể được tái tạo.
+
+
+4. THIẾT LẬP KHẢ NĂNG TÁI TẠO
+
+Đặt cùng một random seed cho Python random, NumPy và TensorFlow.
+
+Sử dụng SEED = 42.
+
+Việc này giúp kết quả huấn luyện ổn định hơn giữa các lần chạy. Tuy nhiên, kết quả vẫn có thể khác nhẹ tùy phiên bản TensorFlow và phần cứng.
+
+
+5. ĐỌC VÀ KIỂM TRA DỮ LIỆU
+
+5.1. Xác định đường dẫn file
+
+Notebook cần chạy được trong cả VS Code và Google Colab.
+
+Thứ tự tìm file:
+
+1. wepastacks_inbound_clean.csv.
+2. assignment_2/wepastacks_inbound_clean.csv.
+3. Yêu cầu upload nếu đang chạy trên Colab.
+
+Nếu không tìm thấy file, dừng chương trình và thông báo rõ tên file cần thiết.
+
+5.2. Chuẩn hóa tên cột
+
+Chuyển toàn bộ tên cột thành chữ thường và xóa khoảng trắng ở đầu hoặc cuối. Ví dụ, Arrival_Time được chuyển thành arrival_time và Dock được chuyển thành dock.
+
+5.3. Lọc loại sự kiện
+
+Nếu có cột type, chuyển giá trị thành string, xóa khoảng trắng, chuyển thành chữ thường và chỉ giữ delivery.
+
+5.4. Chuyển kiểu dữ liệu
+
+Chuyển arrival_time và dock thành numeric. Những giá trị không chuyển được phải trở thành missing values.
+
+Sau đó:
+
+- Xóa dòng thiếu arrival_time.
+- Xóa dòng thiếu dock.
+- Chuyển arrival_time thành integer.
+- Chuyển dock thành integer.
+
+5.5. Kiểm tra phạm vi
+
+Chỉ giữ những dòng có arrival_time lớn hơn hoặc bằng 0 và dock thuộc tập {1, 2, 3, 4}.
+
+5.6. Tính lại khoảng 15 phút
+
+Không phụ thuộc hoàn toàn vào cột time_bin_15m có sẵn. Tính lại bằng cách lấy phần nguyên của arrival_time chia cho 900.
+
+time_bin_15m = floor(arrival_time / 900)
+
+5.7. Sắp xếp dữ liệu
+
+Sắp xếp theo arrival_time rồi đến dock. Reset DataFrame index sau khi sắp xếp.
+
+
+6. GỘP PALLET THEO KHOẢNG 15 PHÚT
+
+Mỗi dòng ban đầu là một pallet. MLP không sử dụng trực tiếp từng pallet riêng lẻ. Dữ liệu phải được chuyển thành số pallet đến mỗi cửa trong mỗi khoảng 15 phút.
+
+Group dữ liệu theo time_bin_15m và dock. Đếm số dòng trong từng group và đặt tên kết quả là arrivals_15m.
+
+Kết quả phải có ba cột:
+
+- time_bin_15m.
+- dock.
+- arrivals_15m.
+
+
+7. BỔ SUNG CÁC KHOẢNG CÓ ZERO ARRIVAL
+
+Sau khi group, một cửa không có pallet đến trong một khoảng sẽ không xuất hiện trong bảng.
+
+Cần tạo toàn bộ tổ hợp giữa tất cả time_bin_15m từ thời điểm đầu đến cuối và bốn dock 1, 2, 3, 4.
+
+Nếu một tổ hợp không tồn tại trong dữ liệu, đặt arrivals_15m = 0.
+
+Mỗi khoảng 15 phút phải có chính xác bốn dòng, tương ứng với bốn cửa nhập. Số dock khác nhau trong mỗi time_bin_15m phải bằng 4. Nếu điều kiện này không đúng, dừng pipeline và báo lỗi.
+
+
+8. TẠO BIẾN THỜI GIAN
+
+Tính thời điểm bắt đầu mỗi khoảng:
+
+interval_start_seconds = time_bin_15m x 900
+
+Tính ngày:
+
+day = floor(interval_start_seconds / 86400) + 1
+
+Tính giờ:
+
+hour = floor((interval_start_seconds mod 86400) / 3600)
+
+Sau đó sắp xếp theo dock rồi đến time_bin_15m. Thứ tự này rất quan trọng cho rolling window và queue simulation.
+
+
+9. TẠO ROLLING ARRIVAL FEATURE
+
+Tạo biến mean_arrivals_60m. Biến này là trung bình của arrivals_15m trong bốn khoảng gần nhất của cùng một dock.
+
+Rolling window gồm khoảng hiện tại và ba khoảng trước đó.
+
+mean_arrivals_60m(t) = [A(t) + A(t-1) + A(t-2) + A(t-3)] / 4
+
+Rolling phải được thực hiện riêng cho từng dock.
+
+Yêu cầu đủ bốn khoảng để tính trung bình. Do đó, ba quan sát đầu tiên của mỗi dock sẽ có missing value và phải được loại trước khi tạo bảng model cuối cùng.
+
+
+10. ƯỚC TÍNH SERVICE RATE
+
+Dữ liệu WEPAStacks không cung cấp trực tiếp số pallet mà robot có thể xử lý trong mỗi 15 phút.
+
+Không sử dụng một service rate giống nhau cho cả bốn cửa vì lượng pallet đến các cửa rất khác nhau.
+
+Service rate của mỗi dock được ước tính chỉ bằng training period, với day nhỏ hơn hoặc bằng 60.
+
+Đầu tiên tính mean arrivals per 15 minutes tại từng dock. Sau đó tính:
+
+service_rate_i = max(1, ceil(1.10 x mean_arrivals_i))
+
+Trong đó:
+
+- service_rate_i là service rate của dock i.
+- 1.10 là service capacity margin.
+- ceil làm tròn lên.
+- Service rate tối thiểu là một pallet.
+
+Với dữ liệu hiện tại, kết quả tham khảo là:
+
+- Dock 1: 25 pallets per 15 minutes.
+- Dock 2: 2 pallets per 15 minutes.
+- Dock 3: 1 pallet per 15 minutes.
+- Dock 4: 1 pallet per 15 minutes.
+
+Không được sử dụng validation hoặc test data để tính service rate.
+
+
+11. MÔ PHỎNG INBOUND QUEUE
+
+Queue được mô phỏng riêng cho từng dock. Tại thời điểm bắt đầu, queue bằng 0.
+
+Với mỗi khoảng thời gian, đặt:
+
+- Q_i(t): số pallet đang chờ.
+- A_i(t): số pallet mới đến.
+- S_i: service rate của dock.
+- K_i: buffer capacity, ban đầu bằng 20.
+
+Đầu tiên tính số pallet còn lại sau khi xử lý:
+
+R_i(t) = max(0, Q_i(t) + A_i(t) - S_i)
+
+Tính số pallet vượt quá buffer:
+
+O_i(t) = max(0, R_i(t) - K_i)
+
+Cập nhật queue:
+
+Q_i(t+1) = min(R_i(t), K_i)
+
+Lưu hai biến queue_length và overflow_pallets.
+
+queue_length không được vượt quá BUFFER_CAPACITY. overflow_pallets ghi lại số pallet không thể nằm trong buffer. Không được để queue tăng vô hạn lên hàng nghìn hoặc hàng trăm nghìn pallet.
+
+
+12. TÍNH BUFFER FILL RATIO
+
+Tạo biến:
+
+buffer_fill_ratio = queue_length / buffer_capacity
+
+Do queue đã được giới hạn, biến này phải nằm trong khoảng từ 0 đến 1.
+
+Ví dụ:
+
+- Queue = 0, capacity = 20: ratio = 0.00.
+- Queue = 10, capacity = 20: ratio = 0.50.
+- Queue = 16, capacity = 20: ratio = 0.80.
+- Queue = 20, capacity = 20: ratio = 1.00.
+
+
+13. TẠO CONGESTION TARGET
+
+Mục tiêu là dự đoán congestion trong 60 phút tiếp theo. Vì một interval dài 15 phút nên 60 phút tương ứng với bốn future intervals.
+
+Với mỗi dock và interval t, lấy queue của t+1, t+2, t+3 và t+4.
+
+future_max_queue_i(t) = max[Q_i(t+1), Q_i(t+2), Q_i(t+3), Q_i(t+4)]
+
+Congestion level:
+
+20 x 0.80 = 16 pallets
+
+Tạo nhãn:
+
+- congestion = 1 nếu future_max_queue lớn hơn hoặc bằng 16.
+- congestion = 0 nếu future_max_queue nhỏ hơn 16.
+
+Các dòng không có đủ bốn future intervals phải bị loại.
+
+Thông tin tương lai chỉ được dùng để tạo target. Không đưa future_max_queue hoặc future arrivals vào feature của MLP.
+
+Tỷ lệ congestion tham khảo của toàn bộ dữ liệu hiện tại là khoảng 16.1%.
+
+
+14. TẠO FEATURE TABLE
+
+Sử dụng ba numeric features:
+
+- buffer_fill_ratio.
+- arrivals_15m.
+- mean_arrivals_60m.
+
+Sử dụng thêm danh tính của dock. Không đưa trực tiếp dock = 1, 2, 3, 4 vào MLP như một biến số liên tục vì khoảng cách giữa các dock number không mang ý nghĩa định lượng.
+
+One-hot encode thành:
+
+- dock_1.
+- dock_2.
+- dock_3.
+- dock_4.
+
+Feature table cuối cùng gồm bảy cột theo đúng thứ tự:
+
+1. buffer_fill_ratio.
+2. arrivals_15m.
+3. mean_arrivals_60m.
+4. dock_1.
+5. dock_2.
+6. dock_3.
+7. dock_4.
+
+Target là congestion.
+
+Không sử dụng sku, batch và week trong phiên bản MLP đơn giản đầu tiên.
+
+
+15. CHIA DỮ LIỆU THEO THỜI GIAN
+
+Không sử dụng random split vì đây là dữ liệu time-series.
+
+Định nghĩa:
+
+- Training period: trước ngày 61.
+- Validation period: ngày 61 đến hết ngày 74.
+- Testing period: từ ngày 75 trở đi.
+
+Cần tạo khoảng cách một giờ trước ranh giới giữa các tập vì target nhìn bốn interval vào tương lai.
+
+15.1. Training set
+
+Một quan sát thuộc training set khi:
+
+t + 3600 < 60 x 86400
+
+Điều này bảo đảm future label của training không sử dụng dữ liệu validation.
+
+15.2. Validation set
+
+Một quan sát thuộc validation khi:
+
+t >= 60 x 86400
+
+và:
+
+t + 3600 < 74 x 86400
+
+15.3. Test set
+
+Một quan sát thuộc test set khi:
+
+t >= 74 x 86400
+
+Các dòng cuối dữ liệu không đủ bốn future intervals đã được loại ở bước tạo target.
+
+15.4. Kết quả tham khảo
+
+Với dữ liệu hiện tại:
+
+- Training: 22,628 observations, congestion rate khoảng 17.96%.
+- Validation: 5,360 observations, congestion rate khoảng 12.37%.
+- Testing: 5,532 observations, congestion rate khoảng 12.24%.
+
+Cả ba tập phải chứa cả nhãn 0 và nhãn 1.
+
+Nếu bất kỳ tập nào chỉ có một nhãn, dừng pipeline và kiểm tra lại BUFFER_CAPACITY, SERVICE_CAPACITY_MARGIN, CONGESTION_THRESHOLD và queue simulation.
+
+
+16. CHUẨN HÓA FEATURES
+
+Chỉ chuẩn hóa ba numeric features:
+
+- buffer_fill_ratio.
+- arrivals_15m.
+- mean_arrivals_60m.
+
+Không cần chuẩn hóa dock_1, dock_2, dock_3 và dock_4.
+
+Sử dụng StandardScaler.
+
+Quy trình bắt buộc:
+
+1. Fit scaler trên X_train.
+2. Transform X_train.
+3. Transform X_validation bằng cùng scaler.
+4. Transform X_test bằng cùng scaler.
+
+Không được fit scaler trên toàn bộ dữ liệu vì sẽ gây data leakage.
+
+Lưu scaler sau khi huấn luyện để sử dụng khi dự đoán dữ liệu mới.
+
+
+17. XỬ LÝ CLASS IMBALANCE
+
+Congestion ít xuất hiện hơn no congestion. Vì vậy, sử dụng balanced class weights.
+
+Tính class weight chỉ từ y_train.
+
+Balanced class weight được tính bằng tổng số training observations chia cho số class nhân với số observations của class tương ứng.
+
+Truyền class weights vào quá trình model.fit. Không oversample validation hoặc test set.
+
+
+18. KIẾN TRÚC MLP
+
+Sử dụng kiến trúc sau:
+
+- Input layer: 7 features.
+- Hidden layer 1: 32 neurons và ReLU activation.
+- Dropout layer: rate bằng 0.20.
+- Hidden layer 2: 16 neurons và ReLU activation.
+- Output layer: 1 neuron và sigmoid activation.
+
+Output là xác suất P(congestion = 1).
+
+Model compilation:
+
+- Optimizer: Adam.
+- Learning rate: 0.001.
+- Loss: Binary cross-entropy.
+
+Theo dõi các metrics trong quá trình train:
+
+- Binary accuracy.
+- Precision.
+- Recall.
+- PR-AUC.
+
+
+19. HUẤN LUYỆN MLP
+
+Sử dụng maximum epochs bằng 100 và batch size bằng 256.
+
+Validation data gồm X_validation và y_validation.
+
+Sử dụng early stopping:
+
+- Monitor: validation loss.
+- Patience: 8 epochs.
+- Restore best weights: True.
+
+Quá trình huấn luyện dừng nếu validation loss không cải thiện trong tám epoch liên tiếp. Sau đó model khôi phục weights của epoch có validation loss tốt nhất.
+
+Truyền balanced class weights vào quá trình huấn luyện. Không sử dụng test set trong quá trình train.
+
+
+20. KIỂM TRA TRAINING HISTORY
+
+Lưu training history thành DataFrame.
+
+Vẽ hai biểu đồ:
+
+1. Training binary cross-entropy loss và validation binary cross-entropy loss.
+2. Training PR-AUC và validation PR-AUC.
+
+Dấu hiệu có thể xảy ra overfitting là training loss tiếp tục giảm trong khi validation loss bắt đầu tăng. Early stopping giúp giảm vấn đề này.
+
+
+21. CHỌN PREDICTION THRESHOLD
+
+Không bắt buộc sử dụng threshold cố định 0.5. Dùng validation set để chọn threshold tốt nhất.
+
+Quy trình:
+
+1. Dự đoán congestion probability trên validation set.
+2. Tính precision-recall curve.
+3. Với mỗi threshold, tính F1-score.
+4. Chọn threshold tạo ra F1-score cao nhất.
+5. Lưu threshold này vào model configuration.
+
+F1 = 2 x Precision x Recall / (Precision + Recall)
+
+Không chọn threshold bằng test set vì test set chỉ dùng cho đánh giá cuối cùng.
+
+
+22. ĐÁNH GIÁ TRÊN TEST SET
+
+Sử dụng model để tạo test_probabilities.
+
+Chuyển probabilities thành class:
+
+- prediction = 1 nếu probability lớn hơn hoặc bằng selected threshold.
+- prediction = 0 nếu probability nhỏ hơn selected threshold.
+
+Báo cáo các metrics:
+
+- Precision.
+- Recall.
+- F1-score.
+- Support.
+- PR-AUC.
+- ROC-AUC.
+
+Vẽ confusion matrix gồm True Negative, False Positive, False Negative và True Positive.
+
+Vẽ precision-recall curve trên test set. PR-AUC đặc biệt quan trọng vì congestion là minority class.
+
+Không điều chỉnh model hoặc threshold dựa trên test results. Nếu cần thay đổi model sau khi xem test results, test set hiện tại không còn là final independent test set.
+
+
+23. LƯU MODEL ARTIFACTS
+
+Tạo thư mục model_outputs nằm cùng thư mục với file CSV.
+
+Lưu các file sau:
+
+- mlp_congestion.keras.
+- feature_scaler.pkl.
+- model_configuration.json.
+- training_history.csv.
+- test_predictions.csv.
+
+23.1. Model file
+
+mlp_congestion.keras chứa architecture và trained weights của MLP.
+
+23.2. Scaler file
+
+feature_scaler.pkl chứa StandardScaler đã fit trên training data.
+
+23.3. Configuration file
+
+model_configuration.json cần chứa:
+
+- Feature names và thứ tự feature.
+- Numeric feature names.
+- Interval duration.
+- Prediction horizon.
+- Buffer capacity.
+- Service capacity margin.
+- Service rate của từng dock.
+- Congestion threshold.
+- Selected prediction threshold.
+- Training end day.
+- Validation end day.
+- Random seed.
+
+23.4. Training history
+
+training_history.csv chứa loss và metrics của mỗi epoch.
+
+23.5. Test predictions
+
+test_predictions.csv cần chứa:
+
+- time_bin_15m.
+- day.
+- hour.
+- dock.
+- arrivals_15m.
+- mean_arrivals_60m.
+- queue_length.
+- buffer_fill_ratio.
+- congestion.
+- predicted_probability.
+- predicted_congestion.
+
+Cuối cùng nén toàn bộ file thành mlp_congestion_results.zip.
+
+
+24. CÁC KIỂM TRA BẮT BUỘC
+
+Pipeline chỉ được xem là hợp lệ khi thỏa mãn tất cả điều kiện sau:
+
+- Không thiếu arrival_time hoặc dock.
+- Dock chỉ có giá trị 1, 2, 3, 4.
+- Mỗi time interval có đủ bốn dock.
+- arrivals_15m không âm.
+- queue_length nằm từ 0 đến buffer capacity.
+- buffer_fill_ratio nằm từ 0 đến 1.
+- Service rate chỉ được tính từ training period.
+- Rolling average không sử dụng future data.
+- Congestion label chỉ sử dụng bốn future intervals.
+- Training label không đi qua validation boundary.
+- Validation label không đi qua test boundary.
+- Scaler chỉ fit bằng training data.
+- Class weights chỉ tính bằng training labels.
+- Threshold chỉ chọn bằng validation data.
+- Test data chỉ được sử dụng cho final evaluation.
+- Cả train, validation và test đều có hai target classes.
+- Model, scaler, threshold và feature order đều được lưu.
+
+
+25. TÓM TẮT WORKFLOW
+
+Load cleaned inbound pallet events
+    -> Validate arrival time and dock
+    -> Create 15-minute intervals
+    -> Count pallet arrivals for each dock
+    -> Add zero-arrival intervals
+    -> Calculate rolling 60-minute arrival rate
+    -> Estimate dock-specific service rates from training data
+    -> Simulate bounded queues and overflow
+    -> Calculate buffer fill ratio
+    -> Create future 60-minute congestion labels
+    -> Create seven MLP input features
+    -> Split data chronologically with one-hour boundaries
+    -> Fit scaler and class weights using training data
+    -> Train MLP with early stopping
+    -> Select threshold using validation F1-score
+    -> Evaluate once using test data
+    -> Save model, scaler, configuration and predictions
+
+
+Bản specification này chứa tên biến, công thức, thứ tự xử lý, tham số, điều kiện kiểm tra và output cần thiết để tạo lại toàn bộ code huấn luyện MLP.
