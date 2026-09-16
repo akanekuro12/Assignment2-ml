@@ -1,0 +1,863 @@
+HƯỚNG DẪN IMPLEMENT WEPA -> MLP -> ACO -> DRONE
+=================================================
+
+MỤC TIÊU
+--------
+
+Xây dựng một pipeline mô phỏng trong đó:
+
+1. Dữ liệu nhập hàng thật của WEPAStacks tạo bốn luồng hàng theo thời gian.
+2. Bốn input point được ánh xạ thành bốn kho vệ tinh giả lập ở xa nhau.
+3. MLP dự đoán xác suất mỗi kho đạt ngưỡng đầy trong 60 phút tiếp theo.
+4. ACO tạo tuyến cho nhiều drone để lấy hàng và đưa về một kho trung tâm.
+5. Drone chỉ có hai giới hạn vật lý: tải trọng và pin.
+
+Không triển khai GPS, Google Maps, tọa độ toàn cầu, thời tiết, vùng cấm bay,
+tránh va chạm, quỹ đạo 3D, time windows hoặc sức chứa kho trung tâm.
+
+
+1. NGUYÊN TẮC TRÌNH BÀY DỮ LIỆU
+-------------------------------
+
+Phải tách rõ dữ liệu thật và giả định mô phỏng.
+
+Dữ liệu thật lấy từ WEPAStacks:
+
+- Thời điểm từng pallet đến.
+- Input point/dock nhận pallet.
+- SKU, batch và week nếu có, nhưng baseline không cần dùng.
+
+Giả định mô phỏng:
+
+- Bốn input point trở thành bốn kho vệ tinh ở xa nhau.
+- Sức chứa của từng kho.
+- Vị trí cục bộ hoặc ma trận khoảng cách.
+- Số drone.
+- Tải trọng drone.
+- Pin và mức tiêu thụ năng lượng.
+- Một kho trung tâm mới.
+
+Câu nên dùng trong report:
+
+"The real WEPAStacks inbound event stream is used to generate time-varying
+arrival demand. The four remote satellite warehouses, their capacities and
+distances, the central depot, and the drone fleet are simulated experimental
+assumptions."
+
+Không được viết rằng dataset WEPAStacks vốn có bốn kho ở xa nhau.
+
+
+2. CẤU TRÚC THƯ MỤC ĐỀ XUẤT
+---------------------------
+
+project/
+  data/
+    wepastacks_inbound_clean.csv
+  config/
+    base_config.yaml
+  src/
+    data_pipeline.py
+    queue_simulator.py
+    feature_builder.py
+    train_mlp.py
+    predict_risk.py
+    aco_optimizer.py
+    rolling_simulation.py
+    baselines.py
+    metrics.py
+  outputs/
+    models/
+    tables/
+    figures/
+    routes/
+  tests/
+    test_data_pipeline.py
+    test_queue.py
+    test_aco_constraints.py
+  run_experiment.py
+
+Có thể triển khai bằng notebook trước, nhưng nên giữ logic thành các function
+riêng để dễ kiểm tra và tái sử dụng.
+
+
+3. FILE CẤU HÌNH
+----------------
+
+Tạo một file cấu hình duy nhất. Ví dụ nội dung logic:
+
+seed: 42
+interval_seconds: 900
+horizon_intervals: 4
+fill_threshold: 0.80
+risk_threshold: 0.50
+warehouse_ids: [1, 2, 3, 4]
+warehouse_capacity: {1: 200, 2: 80, 3: 80, 4: 80}
+number_of_drones: 3
+drone_payload: {1: 30, 2: 30, 3: 20}
+drone_battery_max: {1: 30.0, 2: 30.0, 3: 22.0}
+energy_per_km: {1: 1.0, 2: 1.0, 3: 1.1}
+battery_reset_policy: daily
+aco_ants: 30
+aco_iterations: 100
+aco_alpha: 1.0
+aco_beta: 2.0
+aco_evaporation: 0.10
+objective_weight_remaining: 0.70
+objective_weight_energy: 0.30
+urgency_weight_probability: 0.60
+urgency_weight_fill: 0.40
+
+Các con số trên chỉ là điểm bắt đầu, không phải thông tin thật của WEPAStacks.
+Capacity Dock 1 có thể lớn hơn do lượng event của Dock 1 cao hơn rất nhiều. Phải
+điều chỉnh bằng training/validation simulation để tỷ lệ nhãn dương không gần 0%
+hoặc 100%.
+
+Với battery_reset_policy = daily, available_battery được đặt bằng battery_max ở
+đầu mỗi ngày rồi trừ năng lượng của từng route trong ngày. Đây là giả định thay
+pin đã sạc sẵn, không phải mô hình tối ưu lịch sạc.
+
+
+4. CHUẨN BỊ DỮ LIỆU
+--------------------
+
+4.1. Cột tối thiểu
+
+File CSV chỉ cần:
+
+- arrival_time
+- dock
+
+Nếu có type, chỉ giữ type = delivery. Các cột day, hour, minute và time_bin có
+thể tính lại từ arrival_time. Không cần sku và batch cho baseline.
+
+4.2. Kiểm tra cơ bản
+
+- Chuyển tên cột thành lowercase và strip khoảng trắng.
+- Chuyển arrival_time và dock sang numeric.
+- Xóa dòng thiếu arrival_time hoặc dock.
+- Chỉ giữ arrival_time >= 0.
+- Chỉ giữ dock thuộc {1, 2, 3, 4}.
+- Sắp xếp theo arrival_time rồi dock.
+- Không tự động xóa hai pallet chỉ vì chúng có cùng arrival_time và dock; chúng
+  có thể là hai event riêng.
+
+4.3. Gộp thành interval 15 phút
+
+time_bin = floor(arrival_time / 900)
+
+Group theo [time_bin, dock] và đếm số dòng thành arrivals_15m.
+
+Sau đó tạo full grid:
+
+- time_bin từ min đến max.
+- dock = 1, 2, 3, 4.
+- Left join dữ liệu đã group.
+- Fill missing arrivals_15m bằng 0.
+
+Assertion bắt buộc:
+
+- Mỗi time_bin có đúng bốn dòng.
+- Không còn missing arrivals_15m.
+- arrivals_15m là integer không âm.
+
+4.4. Lưu ý về đơn vị hàng
+
+WEPAStacks ghi pallet events, nhưng drone nhỏ không chở được nguyên pallet.
+Baseline nên gọi mỗi event là một "standardized cargo unit". Payload của drone
+cũng dùng cargo unit. Nếu muốn dùng kg, phải công bố khối lượng mô phỏng m0 và
+nhân mọi event với m0. Không tự nhận đây là khối lượng thật từ dataset.
+
+
+5. MÔ PHỎNG TRẠNG THÁI BỐN KHO
+------------------------------
+
+Lưu một vector queue/state:
+
+Q = {1: 0, 2: 0, 3: 0, 4: 0}
+
+Tại mỗi interval t:
+
+1. Đọc arrivals A[i, t].
+2. Cộng arrivals vào queue.
+3. Tính feature và gọi MLP.
+4. Chạy ACO nếu có kho cần phục vụ.
+5. Trừ lượng drone lấy.
+6. Trừ năng lượng route khỏi available battery của từng drone.
+7. Ghi overflow và cắt queue ở capacity.
+8. Chuyển sang interval tiếp theo; reset pin nếu bắt đầu episode/ngày mới.
+
+Khuyến nghị thứ tự nhất quán:
+
+available[i] = Q[i] + arrivals[i, t]
+pickup[i] = sum_d x[d, i, t]
+raw_next[i] = available[i] - pickup[i]
+overflow[i] = max(0, raw_next[i] - capacity[i])
+Q_next[i] = min(capacity[i], max(0, raw_next[i]))
+
+Không dùng một service_rate bí mật ngoài drone trong phiên bản này. Nếu code MLP
+cũ đang trừ service_rate ở từng interval thì cần tách thành một mode khác hoặc
+tắt service_rate cho mô hình drone-only.
+
+
+6. TẠO NHÃN MLP KHÔNG LEAKAGE
+-----------------------------
+
+Chân trời dự đoán H = 4 interval = 60 phút.
+
+Tại mẫu của kho i và interval t, giả sử không có drone trong tương lai:
+
+available[i, t] = Q[i, t] + arrivals[i, t]
+
+future_no_drone(h) = available[i, t] + sum(arrivals[i, t+1:t+h])
+
+label = 1 nếu max_h future_no_drone(h) / capacity[i] >= 0.80.
+label = 0 nếu ngược lại.
+
+Quan trọng:
+
+- Future arrivals chỉ dùng để tạo label lịch sử.
+- Không dùng future arrivals trong feature.
+- Loại H interval cuối vì không có đủ tương lai để tạo nhãn.
+- Queue dùng để tạo feature phải được sinh bằng một simulation policy đã công
+  bố. Để tránh vòng lặp phụ thuộc model khi huấn luyện lần đầu, tạo historical
+  queue bằng một fixed drone baseline không dùng MLP, ví dụ fullest-first.
+
+Cách đơn giản, có thể tái tạo cho dataset huấn luyện:
+
+- Khởi tạo Q bằng 0 ở đầu mỗi split hoặc episode đã định trước.
+- Chạy chronological một policy fullest-first với cùng drone, payload, battery
+  và distance matrix của thí nghiệm.
+- Policy chỉ đọc available hiện tại, tuyệt đối không đọc future arrivals.
+- Lưu available trước quyết định làm trạng thái của mẫu MLP.
+- Dùng future arrivals chỉ để tạo label no-drone trong 60 phút tiếp theo.
+- Sau khi MLP đã huấn luyện, đánh giá end-to-end bằng rolling simulation có ACO.
+- Khi so sánh các policy trên test, mỗi policy phải có một bản sao Q riêng nhưng
+  cùng initial Q và cùng arrival stream.
+
+Không tạo feature từ kết quả test hoặc dùng scaler fit trên toàn bộ dataset.
+
+
+7. FEATURE TỐI GIẢN
+-------------------
+
+Mỗi mẫu dùng:
+
+1. fill_ratio = available[i, t] / capacity[i]
+2. arrivals_15m = A[i, t]
+3. mean_arrivals_60m = mean(A[i, t-3:t])
+4. dock one-hot = [dock_1, dock_2, dock_3, dock_4]
+
+Tổng cộng 7 giá trị numeric sau one-hot.
+
+Không dùng:
+
+- future arrivals
+- sku
+- batch
+- week
+- output dock
+- predicted value từ test labels
+
+Fit StandardScaler chỉ trên train. One-hot không nhất thiết phải standardize;
+nếu dùng pipeline chung thì phải lưu chính xác transformer cùng model.
+
+
+8. CHIA DỮ LIỆU
+---------------
+
+Chia chronological, ví dụ:
+
+- Train: day <= 60
+- Validation: 61 <= day <= 74
+- Test: day >= 75
+
+Không random split từng dòng vì các cửa của cùng một thời điểm và rolling windows
+có quan hệ thời gian mạnh.
+
+Lưu ý rất quan trọng của dữ liệu hiện tại:
+
+- Dock 1 chiếm phần lớn event.
+- Dock 2-4 có timeline ngắn.
+- Validation/test có thể gần như chỉ đánh giá Dock 1.
+
+Vì vậy luôn xuất bảng metric theo dock và bảng số mẫu/positive label theo split.
+Nếu một dock không có positive label trong test, ghi rõ metric của dock đó không
+thể kết luận, không thay bằng 0 giả.
+
+
+9. HUẤN LUYỆN MLP
+------------------
+
+Kiến trúc baseline:
+
+- Input: 7 features.
+- Dense(32), ReLU.
+- Dense(16), ReLU.
+- Dense(1), Sigmoid.
+
+Training:
+
+- Optimizer: Adam.
+- Learning rate: 0.001.
+- Loss: weighted binary cross-entropy.
+- Batch size: 256.
+- Epoch tối đa: 100.
+- Early stopping patience: 8.
+- Restore best validation weights.
+- Seed: 42 cho Python, NumPy và framework ML.
+
+Output của model:
+
+risk_probability[i, t] = MLP(features[i, t])
+
+Lưu cùng model:
+
+- scaler/transformer
+- feature order
+- capacities dùng khi tạo fill_ratio và label
+- fill threshold
+- prediction horizon
+- classification threshold
+- training time range
+
+Metric MLP:
+
+- Precision
+- Recall
+- F1
+- PR-AUC
+- ROC-AUC
+- Brier score
+- Confusion matrix
+
+Ưu tiên recall của lớp risk nhưng không bỏ qua precision.
+
+
+10. TẠO KHOẢNG CÁCH CỤC BỘ
+--------------------------
+
+Không cần GPS hoặc bản đồ. Có hai lựa chọn.
+
+Lựa chọn A: viết trực tiếp distance matrix 5 x 5.
+
+Nodes = [0, 1, 2, 3, 4]
+0 là central warehouse.
+
+Yêu cầu:
+
+- distance[i][i] = 0
+- distance[i][j] >= 0
+- distance[i][j] = distance[j][i] trong baseline
+
+Lựa chọn B: tạo tọa độ phẳng cục bộ, ví dụ đơn vị km:
+
+central = (0, 0)
+warehouse_1 = (3, 4)
+warehouse_2 = (-5, 2)
+warehouse_3 = (6, -3)
+warehouse_4 = (-4, -6)
+
+distance(i, j) = Euclidean distance.
+
+Đây là tọa độ mô phỏng cục bộ, không phải latitude/longitude.
+
+Kiểm tra khả thi sơ bộ cho từng drone và kho:
+
+energy_round_trip(d, i) = gamma[d] * 2 * distance[0][i]
+
+Nếu energy_round_trip(d, i) > battery[d] thì drone d không bao giờ phục vụ được
+kho i. Phải in cảnh báo cấu hình này trước khi chạy ACO.
+
+
+11. DATA STRUCTURE CHO DRONE VÀ INSTANCE
+----------------------------------------
+
+Drone object/dict:
+
+- id
+- payload_capacity
+- available_battery
+- energy_per_km
+- battery_max
+- available_battery, được cập nhật trong episode
+
+Decision instance tại interval t:
+
+- current_queue: dict warehouse -> units
+- capacity: dict warehouse -> units
+- risk_probability: dict warehouse -> probability
+- distance_matrix
+- drones
+- active_warehouses
+- pickup_demand
+
+Kết quả optimizer:
+
+- routes: dict drone -> list node, ví dụ [0, 2, 4, 0]
+- pickup: dict (drone, warehouse) -> units
+- route_distance per drone
+- energy_used per drone
+- remaining_goods per warehouse
+- objective_value
+- feasible: bool
+
+
+12. KÍCH HOẠT KHO CẦN THU GOM
+-----------------------------
+
+Với mỗi kho:
+
+fill = available[i] / capacity[i]
+urgency = wp * risk_probability[i] + wr * min(1, fill)
+
+active nếu available[i] > 0 và đồng thời:
+
+risk_probability[i] >= risk_threshold
+OR
+fill >= fill_threshold
+
+Trong giả định "khi đầy thì chuyển hết", pickup demand của kho active bằng toàn
+bộ available[i]. Kho không active có demand = 0.
+
+Nếu muốn hành động sớm hơn, MLP sẽ kích hoạt kho trước khi fill đạt 0.8. Đây là
+điểm chính để chứng minh dự đoán có giá trị hơn policy chỉ phản ứng khi đầy.
+
+
+13. HÀM MỤC TIÊU ACO
+--------------------
+
+remaining[i] = demand[i] - sum_d pickup[d, i]
+
+energy_norm = total_energy / (sum battery_max + epsilon)
+
+remaining_norm =
+    sum_i urgency[i] * remaining[i]
+    / (sum_i urgency[i] * demand[i] + epsilon)
+
+objective =
+    weight_energy * energy_norm
+    + weight_remaining * remaining_norm
+
+Minimize objective.
+
+Các constraints:
+
+1. sum_i pickup[d, i] <= payload[d]
+2. energy(route[d]) <= battery[d]
+3. pickup[d, i] = 0 nếu route[d] không ghé i
+4. sum_d pickup[d, i] <= demand[i]
+5. route bắt đầu và kết thúc bằng node 0
+
+Chỉ (1) và (2) là giới hạn vật lý của drone. Các điều kiện còn lại là tính đúng
+logic của hoạt động thu gom.
+
+Không đưa central capacity, time windows hay flight regulations vào objective.
+
+
+14. CÁCH MỘT KIẾN XÂY DỰNG NGHIỆM
+---------------------------------
+
+Pseudo-code mức cao:
+
+function construct_solution(instance, pheromone, rng):
+    remaining = copy(pickup_demand)
+    routes = {}
+    pickups = {}
+
+    for drone d in rng.permutation(drones):
+        current = 0
+        route = [0]
+        load = 0
+        energy_used = 0
+
+        while true:
+            feasible = []
+
+            for warehouse j in active_warehouses:
+                if remaining[j] <= 0:
+                    continue
+                if load >= payload[d]:
+                    continue
+
+                required_with_return =
+                    energy_used
+                    + gamma[d] * distance[current][j]
+                    + gamma[d] * distance[j][0]
+
+                if required_with_return <= battery[d]:
+                    feasible.append(j)
+
+            if feasible is empty:
+                break
+
+            for j in feasible:
+                eta[j] = (epsilon + urgency[j]) /
+                         (epsilon + distance[current][j])
+                score[j] = pheromone[current][j]^alpha * eta[j]^beta
+
+            next = roulette_wheel(feasible, normalized(score), rng)
+
+            amount = min(remaining[next], payload[d] - load)
+            pickups[d, next] += amount
+            remaining[next] -= amount
+            load += amount
+            energy_used += gamma[d] * distance[current][next]
+            route.append(next)
+            current = next
+
+        if current != 0:
+            energy_used += gamma[d] * distance[current][0]
+            route.append(0)
+        else:
+            route = [0, 0]
+
+        routes[d] = route
+
+    calculate objective
+    assert payload and battery constraints
+    return solution
+
+Lưu ý:
+
+- Mỗi lần thử thêm node phải cộng cả năng lượng từ node đó quay về central.
+- Nếu không làm reserve-return check, drone có thể bị mắc kẹt.
+- Lượng pickup được chọn bằng min(remaining, free_payload).
+- Cho phép warehouse được nhiều drone ghé nếu vẫn còn demand.
+- Một drone có thể ghé nhiều warehouse.
+- Xáo trộn thứ tự drone cho từng kiến để drone đầu tiên không luôn lấy phần hàng
+  tốt nhất.
+- Sau khi chọn nghiệm để thực thi, cập nhật:
+  available_battery[d] -= energy_used[d].
+- Reset available_battery về battery_max chỉ ở biên episode đã khai báo, ví dụ
+  đầu ngày; không reset âm thầm sau từng route.
+
+
+15. VÒNG LẶP ACO
+----------------
+
+Khởi tạo:
+
+- pheromone[i][j] = tau0 cho i != j.
+- global_best = None.
+
+Mỗi iteration:
+
+1. Tạo N_ants solutions.
+2. Kiểm tra feasibility từng solution.
+3. Tính objective.
+4. Chọn iteration_best.
+5. Cập nhật global_best nếu tốt hơn.
+6. Evaporation:
+   pheromone *= (1 - rho)
+7. Deposit pheromone trên các cạnh của global_best hoặc iteration_best:
+   delta = Q_aco / (best_objective + epsilon)
+8. Clip pheromone vào [tau_min, tau_max].
+9. Dừng nếu đủ max_iterations hoặc không cải thiện sau stall_iterations.
+
+Khuyến nghị dùng elitist update: chỉ nghiệm tốt nhất gửi pheromone. Vì instance
+chỉ có bốn warehouse, cách này đơn giản và ổn định hơn việc tất cả kiến cùng gửi.
+
+Phải dùng random generator cục bộ, ví dụ numpy.random.default_rng(seed), để mỗi
+run có thể tái tạo.
+
+
+16. ROLLING SIMULATION END-TO-END
+--------------------------------
+
+Pseudo-code:
+
+load data and configuration
+build interval table
+load trained MLP and scaler
+initialize Q for four warehouses
+
+for each test interval t in chronological order:
+    add current arrivals to available state
+    build features using only information <= t
+    predict p[i, t] for all four warehouses
+    determine active warehouses
+
+    if active set is not empty:
+        solution = ACO(current state, p, distance, drones)
+    else:
+        solution = all drones idle
+
+    validate solution
+    subtract pickups
+    subtract route energy from each drone's available battery
+    calculate overflow
+    update Q
+    reset battery only at the configured episode boundary
+    log all values
+
+save interval log
+calculate metrics
+
+Mỗi dòng log nên có:
+
+- time_bin
+- dock
+- arrivals
+- queue_before
+- fill_ratio
+- risk_probability
+- active
+- amount_picked
+- queue_after
+- overflow
+- route ids serving this dock
+- total energy of interval
+- algorithm runtime
+
+
+17. FEASIBILITY VALIDATION
+--------------------------
+
+Viết một function validate_solution() chạy sau mọi nghiệm ACO.
+
+Các assert:
+
+- route[0] == 0 và route[-1] == 0
+- tất cả node trong route thuộc {0,1,2,3,4}
+- total_pickup[d] <= payload[d] + tolerance
+- recomputed_energy[d] <= battery[d] + tolerance
+- pickup[d,i] > 0 chỉ khi i xuất hiện trong route[d]
+- total pickup tại i <= demand[i] + tolerance
+- pickup không âm
+
+Không chỉ tin vào objective; một lỗi code có thể tạo objective tốt bằng cách vi
+phạm constraint.
+
+
+18. UNIT TEST TỐI THIỂU
+-----------------------
+
+Test 1: aggregation
+
+- Tạo vài event thủ công.
+- Kiểm tra đúng số arrivals theo dock/time bin.
+- Kiểm tra zero rows được thêm.
+
+Test 2: label boundary
+
+- Nếu future queue đúng 80% capacity thì label phải bằng 1.
+- Nếu dưới 80% một lượng nhỏ thì label bằng 0.
+
+Test 3: future leakage
+
+- Thay đổi arrivals ở t+1.
+- Feature tại t không được thay đổi; label có thể thay đổi.
+
+Test 4: payload
+
+- Demand 100, payload 20.
+- Drone không được pickup quá 20.
+
+Test 5: battery return reserve
+
+- Drone đủ pin để đến kho nhưng không đủ quay về.
+- Kho đó phải bị loại khỏi feasible set.
+
+Test 6: route energy
+
+- Với route [0,1,2,0], energy phải bằng gamma *
+  (d[0,1] + d[1,2] + d[2,0]).
+
+Test 7: all demand collected
+
+- Nếu tổng payload và pin đủ, remaining phải bằng 0.
+
+Test 8: insufficient fleet
+
+- Nếu fleet không đủ, solution vẫn feasible và remaining > 0.
+
+Test 9: deterministic seed
+
+- Hai lần chạy cùng seed phải cho cùng best objective và routes.
+
+
+19. BASELINES VÀ SO SÁNH
+------------------------
+
+Chạy trên cùng arrivals, capacity, drones, battery và distance matrix:
+
+Baseline A: Nearest-first
+- Chọn warehouse khả thi gần nhất.
+
+Baseline B: Fullest-first
+- Chọn fill_ratio lớn nhất.
+
+Baseline C: ACO-current
+- Chạy ACO nhưng urgency chỉ dùng fill ratio; không dùng MLP probability.
+
+Proposed: MLP-ACO
+- Urgency dùng cả risk probability và fill ratio.
+
+Exact small-instance baseline
+- Với bốn kho, enumerate các permutation và assignment khả thi cho instance nhỏ.
+- Dùng để đo optimality gap của ACO.
+
+Không nên chỉ so MLP-ACO với nearest-first. So ACO-current và MLP-ACO mới trực
+tiếp đo giá trị của dự đoán MLP.
+
+
+20. METRICS
+-----------
+
+MLP metrics:
+
+- precision, recall, F1
+- PR-AUC, ROC-AUC
+- Brier score
+- confusion matrix
+- metrics per dock
+
+Operational metrics:
+
+- number/rate of overflow intervals
+- total overflow units
+- total collected units
+- collection ratio
+- total route distance
+- total energy used
+- energy per collected unit
+- risk-weighted remaining goods
+- number of drone sorties
+- constraint violations; kết quả đúng phải bằng 0
+- ACO runtime
+- optimality gap so với exact baseline trên instance nhỏ
+
+Chạy ACO với ít nhất 10 random seeds. Báo cáo mean, standard deviation và best
+value. Không chỉ báo cáo một run thuận lợi.
+
+
+21. THÍ NGHIỆM ĐỘ NHẠY
+-----------------------
+
+Tối thiểu nên thay đổi:
+
+1. Payload thấp / trung bình / cao.
+2. Battery thấp / trung bình / cao.
+3. lambda_remaining và lambda_energy.
+4. risk threshold.
+
+Mục đích:
+
+- Payload thấp cho biết hệ thống ưu tiên warehouse nào.
+- Battery thấp kiểm tra route feasibility và return reserve.
+- Objective weights cho thấy trade-off hàng tồn và năng lượng.
+- Risk threshold kiểm tra MLP kích hoạt quá nhiều hay quá ít chuyến.
+
+
+22. VẤN ĐỀ CHỈ CÓ BỐN KHO
+-------------------------
+
+Với một drone và bốn warehouse chỉ có 4! = 24 thứ tự. ACO là quá mạnh nếu bài
+toán chỉ yêu cầu chọn một permutation duy nhất.
+
+Để ACO hợp lý mà không thay đổi số kho:
+
+- Dùng nhiều drone.
+- Cho mỗi drone ghé nhiều kho.
+- Cho drone có payload và battery khác nhau.
+- Cho phép demand lớn hơn payload, cần chia qua nhiều drone/vòng.
+- Chạy quyết định lặp theo từng interval với trạng thái thay đổi.
+- So sánh với exact enumeration trên instance nhỏ.
+
+Không cần tạo thêm 10 hoặc 20 kho nếu phạm vi assignment yêu cầu giữ bốn kho,
+nhưng phải trình bày ACO là optimizer động nhiều drone chứ không chỉ là TSP bốn
+nút.
+
+
+23. CÁC LỖI IMPLEMENT THƯỜNG GẶP
+--------------------------------
+
+1. Gọi bốn input point là bốn kho thật của WEPA.
+   Sửa: luôn nói đây là mapping/simulation assumption.
+
+2. Dùng future arrivals làm feature.
+   Sửa: future chỉ tạo label.
+
+3. Random train/test split.
+   Sửa: chronological split.
+
+4. Quên zero-arrival intervals.
+   Sửa: full time-bin x dock grid.
+
+5. Chỉ kiểm tra pin đi đến node tiếp theo.
+   Sửa: luôn reserve đủ pin quay về central.
+
+6. Drone ghé một kho duy nhất nhưng vẫn gọi là route ACO.
+   Sửa: cho phép multi-stop route hoặc dùng assignment algorithm khác.
+
+7. Ép chuyển hết hàng dù fleet không đủ.
+   Sửa: giữ remaining goods, đảm bảo solution feasible, xử lý ở vòng sau.
+
+8. Dùng raw energy và raw remaining có scale quá khác nhau.
+   Sửa: normalize objective components.
+
+9. Chỉ báo accuracy của MLP.
+   Sửa: thêm recall, PR-AUC, Brier và operational metrics.
+
+10. Chỉ chạy ACO một seed.
+    Sửa: chạy nhiều seed và báo cáo độ lệch chuẩn.
+
+
+24. DEFINITION OF DONE
+----------------------
+
+Pipeline hoàn thành khi:
+
+[ ] CSV được kiểm tra và gộp đúng theo 15 phút.
+[ ] Mỗi time bin có đủ bốn warehouse rows.
+[ ] Train/validation/test được chia chronological.
+[ ] Feature không chứa tương lai.
+[ ] MLP model, scaler và config được lưu.
+[ ] MLP xuất probability cho từng warehouse/interval.
+[ ] ACO tạo route bắt đầu và kết thúc ở central node 0.
+[ ] Mọi route thỏa payload và battery.
+[ ] Return-to-central energy được kiểm tra khi construct route.
+[ ] Queue và overflow được cập nhật sau mỗi interval.
+[ ] Có log đầy đủ để tái tạo từng quyết định.
+[ ] Có nearest-first, fullest-first và ACO-current baselines.
+[ ] Có exact baseline cho instance bốn nút nhỏ.
+[ ] Có ít nhất 10 ACO seeds.
+[ ] Có metrics dự đoán và metrics vận hành.
+[ ] Report nói rõ đâu là dữ liệu thật và đâu là mô phỏng.
+
+
+25. THỨ TỰ IMPLEMENT KHUYẾN NGHỊ
+--------------------------------
+
+Giai đoạn 1:
+- Hoàn thành data aggregation và full grid.
+- Viết test aggregation.
+
+Giai đoạn 2:
+- Hoàn thành queue simulator và label builder.
+- Kiểm tra leakage và label distribution.
+
+Giai đoạn 3:
+- Train MLP, lưu model/scaler, xuất test predictions.
+
+Giai đoạn 4:
+- Implement distance matrix, Drone dataclass và feasibility checks.
+- Implement nearest-first trước để kiểm tra simulator.
+
+Giai đoạn 5:
+- Implement one-ant solution construction.
+- Khi one-ant luôn feasible mới thêm pheromone iterations.
+
+Giai đoạn 6:
+- Tích hợp MLP-ACO trong rolling simulation.
+- Xuất interval log.
+
+Giai đoạn 7:
+- Chạy baselines, exact validation, multiple seeds và sensitivity analysis.
+- Tạo bảng/biểu đồ cho report.
+
+Kết quả cuối cùng cần chứng minh hai điều riêng biệt:
+
+1. MLP dự đoán risk đủ đáng tin cậy trên dữ liệu held-out.
+2. Việc dùng risk đó trong ACO cải thiện quyết định vận chuyển so với ACO không
+   dùng MLP, trong khi mọi drone vẫn thỏa tải trọng và pin.

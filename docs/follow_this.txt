@@ -1,0 +1,390 @@
+This one is the basic criteria that need to follow: 
+Project Report: A comprehensive report that includes:
+• Problem Definition: A clear description of the task you are solving, including
+input/output specifications for both training and deployment phases.
+• Machine Learning Approach: A detailed explanation of your solution, includ-
+ing:
+– Choice of model and justification.
+– Training procedure (optimizer, hyperparameters, etc.).
+– Evaluation metrics and their relevance to the task.
+• Results: The outcomes of your experiments, including relevant visualizations,
+tables, and performance metrics.
+• Discussion: Analysis of your findings, including:
+– Implications of the results.
+– Limitations of your approach.
+– Potential improvements or future work
+
+These are the most imporant part you need to make this clear and really really easy to understand and detail:
+Quality Assessment
+The project will be assessed based on the following criteria:
+• Definition of the Learning Task: Specify input/output for both training and
+deployment phases.
+• Knowledge of Model and Algorithm: Explain key components and theory-to-
+code connection.
+• Evaluation and Improvement: Define model behavior, loss function, and dif-
+ferences from practical objectives.
+
+4 Criteria for A2
+A: Task Definition You need to explain the objective and motivation of your task.
+The essential requirement in this section is to clearly define the task at the technical
+level, especially the input and output specifications, which provides the foundation for
+further formal discussion.
+The basic interface of information exchange between your system and the environment
+or user: what constitutes valid input, and what the expected output format is.
+A higher standard involves convincingly articulating how the input received by the
+system and the output it produces are related to the defined task.
+The Table 1 below illustrates three stands of descriptions for system I/O — OK (O),
+Clear (C), and Not specified (N):
+7
+IO OK (O) Clear (C) Not
+spec-
+ified
+(N)
+I Image data rep-
+resented as a 2D
+matrix of pixels,
+each with 3 color
+channels.
+[O] + The data is preprocessed: pixel values in each
+image are normalized to the range [0,1] based on their
+per-image min/max. The task is image classification.
+The images contain photographs of handwritten dig-
+its from 0–9. Most images satisfy this expectation,
+but not all.
+Image
+I A string, e.g., “to
+be or not to be”.
+[O] + Input strings are typically 50–200 characters
+long, with a maximum of 512. The task is sentiment
+classification. Input strings are sentences in some lan-
+guage. A rule-based filter selects English sentences,
+but may allow nonsensical text. Many inputs con-
+tain statements expressing judgments (e.g., product
+reviews), but clarity is not guaranteed.
+User re-
+view
+I A 500-
+dimensional
+vector of real
+numbers
+[O] + Each vector represents the past 500 days of
+closing prices for a specific stock. Missing data is
+filled with the last available value. The closing price
+is defined as the final transaction price per [cite].
+Stock
+price
+informa-
+tion
+O A real-valued
+score: the higher
+the value, the
+more likely the
+model thinks the
+input is positive.
+[O] + Let z be the output; the probability that the
+sample is positive is 1/(1 + e−z ).
+Classification
+O The likelihood
+and bounding
+box of a target
+object around
+196 reference
+locations in an
+image.
+[O] + Each detection is a 205-dimensional vector: the
+first value indicates objectness; the next 4 give bound-
+ing box size, aspect ratio, and x/y offset; the final 200
+values represent class probabilities.
+Object
+detec-
+tion
+result
+Table 1: Specification of Task Input and Output
+Rubrics of this criterion:
+Failed (0%): The task is not defined at the technical level. NOTE that this applies when
+a machine learning technique is claimed to be useful without specifying the system
+interface explicitly. For example, a claim that “decision trees lead to interpretable
+solutions” (for option 1) or that “customer churn is an important problem for
+telecom industry” (for option 2) will be rated as “Failed”, because these general
+statements do not specify the task at the technical level, and thus do not provide
+a clear motivation for applying machine learning to the task.
+Partially Failed (25%): There are efforts to specify the system interface, but the de-
+scription is not clear enough to allow a technically sound design of the system.
+8
+Some of the information interfaces are defined below the “OK” level. For example,
+to identify the customer churn problem as a classification task with binary output,
+but not specifying the input features.
+Pass (50%): All information interfaces are defined at least to the OK level. Based on
+the specified I/O of the system, the information processing task has been defined
+satisfactorily. The standard is met if for a 3rd party independent assessor, given
+the specification, the assessor can design tests to evaluate a given solution against
+the defined task.
+Fair (65%): All information interfaces are defined at the Clear level. Based on the
+specified I/O of the system, the information processing task has been defined clearly.
+Potential challenges and the core problem of the task have been identified.
+Excellent (80%): “Fair” Requirement PLUS The motivation of the task is well-articulated,
+with sufficient background study and rich context. For option 1, this will explain
+from the historical perspective. For option 2, this will explain the practical sig-
+nificance of the task. For either option, the motivation to apply machine learning
+to the task should be clearly articulated, e.g. by explaining why traditional ap-
+proaches are not sufficient to solve the task, and how conditions to apply machine
+learning are expected to be satisfied.
+Full Mark (100%): “Excellent” Requirement PLUS Critical thinking has been applied
+to identify a question of research value. For option 1, the historical perspective
+should be treated with extensive literature review to support the claim of the re-
+search value (by the original work). The student needs to demonstrate a deep
+understanding of the historical context, with complete and clear interpretation of
+the techniques at the technical level. For option 2, the practical challenge must be
+well-defined and supported by either empirical evidence or theoretical demonstra-
+tion at technical level. For either option, the full mark of the “Task Definition”
+criterion corresponds such an understanding of the task that a clear, well-motivated
+and arguably feasible research question can be identified.
+Any mark between [80, 100] will be based on evidence of the criteria being met, both
+from the submitted work and from the Q/A during the presentation.
+Any mark below 50 should be verified (and noted) during the presentation session
+with a clear question to the student – the question could be raised by peer students and
+the assessor can mark the Q/A as supporting evidence for the mark.
+B: Explanation of Model, Algorithm, Key Components, and System Structure
+You need to demonstrate a deep understanding of the core computational procedures
+and components of the machine learning model you studied or used. Emphasize how
+theoretical algorithms are mapped to implementation in code and how different parts of
+your system work together to achieve the task.
+• System Overview: Provide a high-level summary of the data flow or computation
+pipeline (e.g., data preprocessing, training routine, and model deployment). Keep
+it concise yet complete. Show understanding of ML fundamentals (for Option 1)
+or of system design and feasibility (for Option 2).
+9
+• Key Components: Explain the design choices, implementation, and motivation
+behind core modules (e.g., data-model alignment, model architecture, optimizer).
+• Theory-to-Code: Describe how mathematical formulas are implemented as func-
+tions or classes in code—such as loss functions, forward/backward propagation.
+• Implementation Details and Challenges: Discuss framework choices, hyper-
+parameter tuning, performance optimizations, and their impact on model behavior.
+The Table 2 below provides examples of component-level descriptions—OK (O),
+Clear (C), and Unspecified (U):
+ComponentOK (O) Clear (C) Unspecified
+(U)
+H The model is
+a 3-layer fully
+connected neural
+network with
+output dimen-
+sions 128, 128,
+and 10.
+[O] + The network uses ReLU activations; skip con-
+nections exist between the two 128-d layers. Param-
+eters are initialized via Xavier normal distribution.
+Neural
+network
+H Decision tree
+using information
+gain maximiza-
+tion, where
+information gain
+is computed
+based on entropy
+. . .
+[A] + Tree structure defined recursively as . . . ; key
+logic for decision traversal is . . . ; line X of the code
+implements recursive return; no explicit loss is defined
+during training (information gain is used).
+Decision
+tree
+L Loss function is
+mean squared
+error (MSE),
+1
+n
+∑n
+i=1(yi − ˆyi)2;
+same metric used
+during testing.
+[A] + Outliers caused problems with variance; I ex-
+perimented with absolute error. However, gradient
+issues arose with |x| near 0 . . .
+Mean
+squared
+error
+A Used gradient
+descent: θt+1 =
+θt − η∇L(θt),
+where η is the
+learning rate.
+[A] + Used Adam optimizer with update rule: θt+1 =
+θt − η mt√vt+ϵ . mt, vt are moment estimates; ϵ prevents
+divide-by-zero. Compared Adam and vanilla GD in
+experiments. Adam was implemented from scratch
+. . .
+Gradient
+descent
+Table 2: Specification of Model Components . In ”Components”, ”H” stands for the
+model architecture, ”L” stands for the loss function, and ”A” stands for the training
+algorithm.
+Rubrics of this criterion:
+Failed (0%): The model or algorithm is not explained at the technical level. For option
+1, this criterion is considered ”Failed” if a model is merely used rather than studied
+10
+and built, e.g. via importing a function from the scikit-learn library; or, for
+either option 1 or 2, an implementation is generated by AI tools and the student
+cannot demonstrate BASIC understanding of the model structure, algorithm, and
+key components. “BASIC understanding” is verified by the student’s ability to
+explain the model structure, algorithm, and key components at the technical level,
+and to connect the theoretical model to the actual code implementation. For exam-
+ple, if a student states “I used a Convolutional Neural Network to perform an image
+analysis task”, but needs extensive effort to reading through the code/comments
+to find how many channels are used in a layer when being asked during the pre-
+sentation of the project, or needs unreasonably long time to find the loss function
+used in the code (e.g. reading through without understanding own program is re-
+ferring to the required function), then the student is not demonstrating BASIC
+understanding of the model structure and key components, and thus this criterion
+will be rated as “Failed”.
+Partially Failed (25%): The model or algorithm is not fully explained at the technical
+level. This criterion is considered “Partially Failed” if, for either option 1 or 2,
+an implementation is generated by AI tools and the student cannot demonstrate
+PROFICIENT understanding of the model structure, algorithm, and key compo-
+nents. “PROFICIENT understanding” is verified by the student’s ability to explain
+the model structure, algorithm, and key components at the technical level, and to
+connect the theoretical model to the actual code implementation. Following the
+above example, if a student needs to reading through the code/comments on-site
+during the presentation to find how many channels are used in a layer/loss function
+definition (improve from the previous scenario: one successfully understands own
+project when being asked), then the student has demonstrating BASIC, but NOT
+PROFICIENT understanding of the model structure and key components, and thus
+this criterion will be rated as “Partially Failed”.
+Pass (50%): The system overview and all key components are defined at least at “OK”
+level. There are efforts to explain the system, but the description is superficial
+or disjointed. The technical effort of this level is corresponding to basic usage of
+AI tools to build the implementation, where the sophistication of the project is
+low and no substantial design choices are made by the student. The student has
+familiarised themselves with the codebase and can explain the implmentation at
+a basic level – i.e. the project has been carefully read and understood before the
+presentation and questioning. However, the understanding is limited to “what has
+been done” rather than “why it is done this way”. The student cannot explain the
+rationale behind design choices, or cannot explain the role of key components in
+the context of the specific task. For example, the student may list the components
+of the system (e.g., “the model has 3 layers with 128 channels each, and uses Adam
+optimizer”), but fails to explain how these the number of layers has been decided,
+why the choice of the architecture is suitable for the task, why Adam is used instead
+of other optimizers, etc. The student may also mention the loss function used in
+the code, but cannot explain why this loss function is chosen for the specific task.
+Fair (65%): The system overview and all key components are defined at least at “Clear”
+level. The description covers the data flow and the basic structure of the model.
+A peer with similar background could reasonably reconstruct the high-level archi-
+11
+tecture of the system based on the description. The student can demonstrate basic
+understanding of the motivation behind design choices. In the above example of
+image-processing tasks, the student can explain that “the model has 3 layers of
+convolution layers” is corresponding to the geometry/texture properties target of
+interest (or similar discussion about other settings and parameters).
+Excellent (80%): “Fair” Requirement PLUS The description is comprehensive and co-
+herent, covering the data flow, model architecture, and key components in detail.
+The rationale behind design choices is well-articulated. The student demonstrates
+a deep understanding of *why* certain components or hyperparameters work for
+this specific task. Challenges in implementation (e.g., convergence issues, gradi-
+ent stability, data pipeline bottlenecks) are discussed with technical depth. In the
+presentation, the student actively focus on challenging questions about the imple-
+mentation and design, showing critical thinking and mastery of the material. For
+example, the student can explain why a certain architecture is chosen for the spe-
+cific task, and can discuss potential alternatives and their pros/cons, with empirical
+evidence or extracting support from the literature.
+Full Mark (100%): “Excellent” Requirement PLUS Critical thinking is applied to the
+implementation and structural design. The student demonstrates mastery by iden-
+tifying limitations in standard implementations or by customizing core algorithmic
+components to better suit the task. The understanding of the “Theory-to-Code”
+aspect is seamless and complete, showing potential for innovation or deep optimiza-
+tion. Works at this level addressing an open research question and the core content
+should be technically sound and well-motivated such to suit a future research paper.
+Any mark between [80, 100] will be based on evidence of the criteria being met, both
+from the submitted work and from the Q/A during the presentation.
+Any mark below 50 should be verified (and noted) during the presentation session
+with a clear question to the student – the question could be raised by peer students and
+the assessor can mark the Q/A as supporting evidence for the mark.
+C: Model Evaluation and Refinement You must clearly articulate the model’s
+intended behavior for your selected task. Revisit your choice of loss function—if it does
+not directly match the task’s real objective, you should explain why this mismatch is
+tolerated during model construction (this discussion may also appear under section B).
+In addition to the training loss, report any extra evaluation metrics and procedures
+used to ensure your model meets the task’s requirements. Consider the following aspects:
+• Expected Model Behavior: Describe expected model output given an input,
+then discuss the idea comparison between model output and the desired output.
+Whether the ideal comparision is employed in your project implementation? If yes,
+at which stage of the project (e.g., training, validation, testing)? If no, what is the
+reason for not using the ideal comparison? What are the potential consequences of
+not using the ideal comparison?
+• Loss Function vs. Task Objective: Regardless your answer to the above ques-
+tion, you need to define a loss function for model training in your project. What is
+the loss function? How it differs from/aligns with the true business goal? If there
+12
+is a discrepancy between the loss function and the task objective, you should give
+explict examples of the issue and provide means to monitor/mitigate it.
+• Reflections and Future Work: Critically assess your implementation and learn-
+ing outcomes; outline potential improvements or next steps.
+Rubrics of this criterion:
+Failed (0%): The evaluation is missing or fundamentally flawed. The student presents
+a model without any quantitative evidence of its performance (e.g., “it works well”
+without metrics). Or, the student uses an evaluation method that is completely
+inappropriate for the task (e.g., using MSE for a classification task without justifi-
+cation, or testing on the training set only). The student cannot explain what the
+metrics mean or how they relate to the task.
+Partially Failed (25%): The evaluation is present but superficial or contains signifi-
+cant methodological errors. The student reports a metric (e.g., accuracy) but does
+not provide context (e.g., baseline, class distribution). There is no separation be-
+tween training and test data, or the split is flawed (e.g., data leakage). The student
+cannot explain the difference between training loss and the evaluation metric.
+Pass (50%): The evaluation follows standard practices but lacks depth. The student
+reports appropriate metrics (e.g., accuracy, loss) on a held-out test set. There is
+a basic comparison between training and test performance to check for overfitting.
+However, the analysis is limited to reporting numbers. There is no discussion of
+*why* the performance is at this level, or how the loss function relates to the task
+objective. The student accepts the results without critical reflection. Typically, if
+the student present the evaluation section in an AI-generated project, knowning
+the basic facts, but without demonstrating a clear understanding of the evaluation
+process and applying critical thinking to interpret the results, the evaluation will
+be rated at this level.
+Fair (65%): The evaluation is solid and clearly communicated. The student provides a
+comprehensive report of performance, including appropriate splits (train/val/test)
+and metrics relevant to the task (e.g., F1-score for imbalanced data). Reflecting the
+example provided: The student achieves a reasonable result (e.g., in terms of accu-
+racy) and validates it with robust methods like cross-validation or proper statistical
+reporting (mean/std). The student goes beyond top-line metrics to analyze specific
+behaviors (e.g., confusion matrix analysis showing class-specific performance). The
+discrepancy between loss function and task objective is acknowledged, even if not
+fully resolved. Future work is identified based on the error analysis (e.g., suggesting
+data augmentation for underperforming classes).
+Excellent (80%): “Fair” Requirement PLUS The evaluation is rigorous and insightful.
+The student critically analyzes the “Expected Model Behavior” vs. actual output.
+The discussion on “Loss Function vs. Task Objective” is deep—identifying specific
+edge cases where the loss minimizes but the task objective fails (or vice versa) and
+proposing specific monitoring or mitigation strategies. The reflections are not just
+about “trying more data” but suggest architectural or algorithmic changes based on
+the failure modes observed. The student can defend their evaluation methodology
+against challenges (e.g., why accuracy was chosen over AUC in this specific context).
+13
+Full Mark (100%): “Excellent” Requirement PLUS Critical thinking leads to a novel
+or highly sophisticated evaluation strategy. The student might design a custom
+metric that better captures the business/scientific value of the task than standard
+metrics. Or, the student performs a deep theoretical analysis of the generalization
+gap. The “Reflections” section demonstrates a researcher-level understanding, con-
+necting the empirical results back to the theoretical foundations of the model (e.g.,
+explaining performance in terms of hypothesis space complexity or optimization
+landscape). The evaluation provides conclusive evidence regarding the research
+question posed in the Task Definition.
+Any mark between [80, 100] will be based on evidence of the criteria being met, both
+from the submitted work and from the Q/A during the presentation.
+Any mark below 50 should be verified (and noted) during the presentation session
+with a clear question to the student – the question could be raised by peer students and
+the assessor can mark the Q/A as supporting evidence for the mark.
+
+
+
+
+My own criteria:
+
+This one will write follow an rule and format of professional paper that submitted in the A star conference such as iclr, neurips and icml
+But this one is an undergraduate student report so that the writing of this should keep simple as it can and the way you write and the way this explain should be keep easy to understand.
+
+Firstly:
+The WEPAStacks dataset represents 89 days of operations in a real finished-goods warehouse. Products arrive from four production lines through four inbound points. Each arriving pallet must be collected by a warehouse vehicle and moved into storage. Pallets requested for shipping are later moved from storage to one of ten outbound points.
+The dataset contains three files. 1_layout.csv describes the warehouse layout, including storage areas, aisles and inbound and outbound points. 2_orders.json contains approximately 400,000 pallet delivery and retrieval events and is the main file used in this project. 3_initial_fill_lvl.json describes the inventory stored in the warehouse at the beginning of the simulation.
+Each order event contains the event type, product identifier, arrival time, dock number, batch number and week number. This project focuses only on delivery events at inbound points 1 to 4. The data is cleaned by checking missing values, correcting data types, validating the dock and time values, and sorting the events by arrival time. The arrival time is then divided into 15-minute intervals, and the number of arriving pallets at each inbound point is calculated.
+Because the dataset does not contain inbound queue information, the queue at each inbound point is simulated using the number of arriving pallets and the number of pallets removed by warehouse vehicles. An MLP uses the current buffer utilisation and recent pallet-arrival rates to predict whether an inbound point will become congested during the next 60 minutes.
