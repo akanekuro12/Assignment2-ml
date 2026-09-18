@@ -102,10 +102,12 @@ def optimize_aco(
     aco_config: Mapping,
     seed: int,
     central_node: int = 0,
+    objective_config: Mapping | None = None,
 ) -> RoutingSolution:
     if not demand:
         return idle_solution(drones, demand, central_node)
 
+    objective = aco_config if objective_config is None else objective_config
     rng = np.random.default_rng(seed)
     pheromone = np.full(distance_matrix.shape, float(aco_config["initial_pheromone"]), dtype=float)
     np.fill_diagonal(pheromone, 0.0)
@@ -125,8 +127,8 @@ def optimize_aco(
                 rng=rng,
                 alpha=float(aco_config["alpha"]),
                 beta=float(aco_config["beta"]),
-                weight_remaining=float(aco_config["weight_remaining"]),
-                weight_energy=float(aco_config["weight_energy"]),
+                weight_remaining=float(objective["weight_remaining"]),
+                weight_energy=float(objective["weight_energy"]),
                 central_node=central_node,
             )
             validate_solution(

@@ -1,0 +1,695 @@
+\documentclass[10pt]{article}
+
+% This report is self-contained and is intended to compile on a standard
+% TeX Live or Overleaf installation.
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[letterpaper,margin=0.82in]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage[table]{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit}
+\pgfplotsset{compat=1.18}
+
+\definecolor{navy}{HTML}{17365D}
+\definecolor{blue}{HTML}{2F5597}
+\definecolor{lightblue}{HTML}{D9EAF7}
+\definecolor{paleblue}{HTML}{EEF5FB}
+\definecolor{lightgray}{HTML}{F2F2F2}
+\definecolor{midgray}{HTML}{666666}
+\definecolor{goodgreen}{HTML}{DDEBF7}
+\definecolor{warnorange}{HTML}{FCE4D6}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=navy,
+  citecolor=navy,
+  urlcolor=blue,
+  pdftitle={WEPAStacks Inbound Congestion Prediction and Risk Aware Drone Routing},
+  pdfsubject={Machine Learning Assignment 2 Project Report}
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\setlist[itemize]{leftmargin=1.45em,itemsep=0.25em,topsep=0.25em}
+\setlist[enumerate]{leftmargin=1.65em,itemsep=0.25em,topsep=0.25em}
+\captionsetup{font=small,labelfont=bf}
+\renewcommand{\arraystretch}{1.18}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\R}{\mathbb{R}}
+
+\title{\textbf{WEPAStacks Inbound Congestion Prediction and Risk Aware Drone Routing}\\[0.45em]
+\large An MLP and Ant Colony Optimisation Framework}
+\author{Undergraduate Machine Learning Project Report}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This project studies whether recent inbound activity can predict warehouse-buffer congestion early enough to support proactive transport decisions. The real WEPAStacks event stream contains 205,258 inbound pallet events across relative days 2--89. Events are aggregated into 15-minute intervals for four inbound points. A compact multilayer perceptron (MLP) uses current buffer utilisation, current arrivals, a 60-minute rolling arrival rate, and a one-hot dock identifier to predict whether a simulated queue will reach 80\% of capacity during the next 60 minutes. The verified baseline contains 801 trainable parameters and achieves 98.66\% accuracy, 98.39\% precision, 90.55\% recall, 94.31\% F1, and 97.32\% average precision on the chronological test set. These results apply to a simulated congestion target and provide strong evidence mainly for Dock~1, because Docks~2--4 have no positive examples in validation or test.
+
+The project also implements a risk-aware ant colony optimisation (ACO) layer that converts predicted risk into feasible multi-drone pickup routes under payload and return-battery constraints. The four remote warehouses, their capacities and coordinates, the central depot, and the drone fleet are simulated experimental assumptions; they are not properties of the WEPAStacks dataset. The routing implementation passes ten unit tests covering leakage control, queue updates, determinism, payload, battery, demand, and route feasibility. However, no completed end-to-end operational comparison is available in the supplied outputs. Consequently, this report treats the MLP metrics as experimental findings and the MLP--ACO system as an implemented, constraint-tested framework whose operational benefit remains an open empirical question.
+\end{abstract}
+
+\textbf{Keywords:} warehouse congestion, multilayer perceptron, time-series classification, class imbalance, ant colony optimisation, drone routing, WEPAStacks
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+Inbound congestion occurs when arriving goods accumulate faster than a warehouse handling system can remove them. A useful warning system must detect risk before the buffer is full, while a useful transport policy must turn that warning into a feasible action. This project links these two tasks. The MLP estimates the risk that a dock will reach a congestion threshold within one hour. A routing layer then uses that risk to decide which simulated satellite warehouses should be served and how a small fleet of drones should visit them.
+
+The practical motivation is that a purely reactive policy waits until the buffer is already close to full. If congestion can be forecast from the current queue and recent arrivals, a vehicle can be dispatched earlier. Machine learning is suitable because the relationship between bursty arrival patterns, queue state, dock identity, and near-future congestion is nonlinear. A fixed threshold on the current fill ratio cannot represent all of these interactions. A small MLP is used instead of a larger sequential model because the feature set already summarises the recent 60-minute history, the dataset is tabular, and the model must remain easy to inspect and deploy.
+
+The central research question is:
+
+\begin{quote}
+Can current buffer utilisation and recent inbound arrivals predict simulated congestion in the next 60 minutes, and can that risk signal be converted into feasible resource-constrained pickup routes?
+\end{quote}
+
+The supplied evidence answers the first part positively within the present simulator and test distribution. The second part is only partially answered: route feasibility is implemented and tested, but the operational comparison against reactive baselines has not yet been produced.
+
+\section{Task Definition}
+
+\subsection{Scope and distinction between observed and simulated data}
+
+The project deliberately separates observations from experimental assumptions. WEPAStacks provides the temporal stream of inbound events. It does not provide four geographically separated warehouses, drone specifications, a central depot, or observed congestion labels.
+
+\begin{table}[H]
+\centering
+\caption{Observed information and simulated assumptions}
+\label{tab:real-simulated}
+\small
+\begin{tabularx}{\textwidth}{>{\bfseries}p{0.20\textwidth}YY}
+\toprule
+Category & Used in the project & Interpretation \\
+\midrule
+Observed from WEPAStacks & Arrival time, inbound dock, SKU, batch, and week where available & The event stream determines time-varying arrival demand. The baseline model uses arrival time and dock; SKU and batch are excluded. \\
+Simulated for the MLP baseline & Queue length, service rate, buffer capacity of 20 units, and congestion at 16 units & These variables create a reproducible prediction target. They are not observed ground truth. \\
+Simulated for the drone study & Four satellite warehouses, capacities, planar coordinates, central depot, drone payload, battery, and energy consumption & These values define a controlled routing experiment. One event is treated as one standardised cargo unit, not as a claim that a small drone carries a physical pallet. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Training interface}
+
+Each training observation represents one dock at the end of a 15-minute interval. The input vector is
+\begin{equation}
+\mathbf{x}_{i,t} = [r_{i,t},\; a_{i,t},\; \bar{a}^{(60)}_{i,t},\; d_{i,1},\; d_{i,2},\; d_{i,3},\; d_{i,4}] \in \R^7,
+\end{equation}
+where $r_{i,t}$ is the buffer fill ratio, $a_{i,t}$ is the current number of arrivals, $\bar{a}^{(60)}_{i,t}$ is the mean arrival count over the current and previous three intervals, and $d_{i,j}$ is a one-hot dock indicator. All input values are available at or before time $t$.
+
+The binary training target is
+\begin{equation}
+y_{i,t}=\mathbb{1}\!\left[\max_{h\in\{1,2,3,4\}} Q_{i,t+h} \geq 0.8K_i\right],
+\label{eq:target}
+\end{equation}
+where $K_i$ is buffer capacity. In the verified baseline, $K_i=20$ and the positive threshold is 16 units. Future queue values are used only to construct the historical label. They never appear in the input vector.
+
+\begin{table}[H]
+\centering
+\caption{Technical input and output specification}
+\label{tab:io}
+\small
+\begin{tabularx}{\textwidth}{p{0.15\textwidth}p{0.20\textwidth}YY}
+\toprule
+Phase & Interface & Valid input & Output \\
+\midrule
+Training & One dock--interval sample & Seven real-valued features in the fixed order shown above; numeric features are scaled using training statistics only; dock indicators remain binary & Binary label indicating whether the simulated queue reaches 80\% capacity in the following four intervals \\
+MLP deployment & Four current dock states & Current available units, current arrivals, trailing four-interval mean, and dock identity; no future information & Four sigmoid scores in $[0,1]$, one per dock; a score is converted to a warning using a stored threshold \\
+Routing deployment & Current queues, risk scores, distances, and drone states & Non-negative demand; valid symmetric distance matrix; payload and remaining battery for each drone & A route and pickup allocation for every drone, energy used, remaining goods, objective value, and feasibility status \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Expected behaviour}
+
+Given a low fill ratio and low recent arrivals, the MLP should produce a low risk score. A high or rapidly increasing queue should raise the score even if the current fill ratio has not yet reached 80\%. The ideal classifier detects most future congestion cases without producing excessive false alarms. In routing deployment, a high-risk warehouse may become active before it is physically full. Every proposed route must begin and end at the central depot, stay within payload and available-battery limits, collect only from visited warehouses, and never collect more than the requested demand.
+
+\section{Dataset and Preprocessing}
+
+\subsection{Dataset structure and quality}
+
+The cleaned dataset contains 205,258 inbound events and nine fields: arrival time, relative day, hour, minute, 15-minute time bin, dock, SKU, batch, and week. It covers relative days 2--89. Basic checks found no missing values, no invalid dock identifiers, no negative arrival times, and no fully duplicated rows. The derived day, hour, minute, and time-bin fields are consistent with arrival time. There are 4,763 repeated arrival-time and dock combinations, but these are not removed because multiple distinct cargo events may occur at the same dock in the same second.
+
+The main data-quality issue is representativeness. Dock~1 contains 93.26\% of all events, while Docks~2--4 disappear early in the timeline. After day~39, all observed events belong to Dock~1.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.82\textwidth,
+  height=5.4cm,
+  ybar,
+  bar width=22pt,
+  ymin=0,ymax=100,
+  ylabel={Share of inbound events (\%)},
+  symbolic x coords={Dock 1,Dock 2,Dock 3,Dock 4},
+  xtick=data,
+  nodes near coords,
+  nodes near coords align={vertical},
+  every node near coord/.append style={font=\small},
+  grid=major,
+  grid style={draw=gray!20},
+  axis line style={draw=midgray},
+  tick style={draw=midgray},
+  fill=blue!75,
+]
+\addplot coordinates {(Dock 1,93.26) (Dock 2,2.88) (Dock 3,2.15) (Dock 4,1.71)};
+\end{axis}
+\end{tikzpicture}
+\caption{Inbound-event distribution by dock. Class weights correct label imbalance, but they do not correct the strong imbalance in dock coverage.}
+\label{fig:dock-distribution}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Temporal coverage and arrival distribution by dock}
+\label{tab:dock-coverage}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Dock & Events & Share & First day & Last day & Active days & Zero intervals \\
+\midrule
+1 & 191,428 & 93.26\% & 2 & 89 & 88 & 20.25\% \\
+2 & 5,902 & 2.88\% & 2 & 39 & 12 & 92.65\% \\
+3 & 4,421 & 2.15\% & 2 & 18 & 8 & 94.78\% \\
+4 & 3,507 & 1.71\% & 2 & 11 & 5 & 95.83\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Aggregation and zero intervals}
+
+Arrival time is divided by 900 seconds and rounded down to obtain a 15-minute time bin. Events are grouped by time bin and dock. A complete Cartesian grid is then created from all 8,395 consecutive time bins and the four docks, producing 33,580 dock--interval rows before rolling and future-horizon exclusions. Missing counts are filled with zero. This step is necessary because a missing event row may mean that an active dock received no goods during the interval.
+
+The same operation also creates a limitation. For Docks~2--4, a zero after the final recorded event may mean either zero demand or missing/inactive coverage. The dataset has no \texttt{dock\_active} field, so the pipeline cannot distinguish these cases. The report therefore treats late zero rows for Docks~2--4 cautiously.
+
+\subsection{Rolling features, queue simulation, and leakage control}
+
+The 60-minute rolling feature is the mean of arrivals in the current and previous three intervals. The first three rows for each dock are discarded because a complete window is unavailable. The verified MLP baseline estimates a fixed service rate from the training period only:
+\begin{equation}
+S_i = \max\left(1,\left\lceil 1.10\,\overline{a}_{i,\mathrm{train}}\right\rceil\right),
+\end{equation}
+which gives 25, 2, 1, and 1 units per 15 minutes for Docks~1--4. The queue update is
+\begin{align}
+R_{i,t} &= \max(0,Q_{i,t}+a_{i,t}-S_i),\\
+O_{i,t} &= \max(0,R_{i,t}-K_i),\\
+Q_{i,t+1} &= \min(K_i,R_{i,t}).
+\end{align}
+
+The final four rows for each dock are discarded because they do not have a complete future label horizon. The resulting modelling table contains 33,552 observations. Leakage is controlled by using only current and past arrivals as features, fitting the service rate and scaler on training data, inserting one-hour gaps at split boundaries, choosing the classification threshold on validation data, and reserving test data for final evaluation.
+
+\begin{table}[H]
+\centering
+\caption{Chronological data split}
+\label{tab:splits}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Split & Time range & Observations & Positive & Positive rate \\
+\midrule
+Training & Before the day 60 boundary & 22,628 & 4,065 & 17.96\% \\
+Validation & Day 61 to before day 74 boundary & 5,360 & 663 & 12.37\% \\
+Test & Day 75 onward & 5,532 & 677 & 12.24\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{System Design}
+
+\subsection{End-to-end data flow}
+
+Figure~\ref{fig:pipeline} shows the intended system. The upper path is the verified historical MLP baseline. The lower path is the drone-only deployment framework. These paths currently use different queue assumptions and must not share a model without retraining.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=8mm and 7mm,
+  box/.style={draw=navy,rounded corners=2pt,fill=paleblue,align=center,minimum height=10mm,text width=29mm,font=\small},
+  decision/.style={draw=navy,diamond,aspect=2.2,fill=lightblue,align=center,font=\small,inner sep=1.5pt},
+  arrow/.style={-{Latex[length=2.2mm]},thick,draw=navy}
+]
+\node[box] (events) {WEPAStacks\\event stream};
+\node[box,right=of events] (grid) {15-minute\\full dock grid};
+\node[box,right=of grid] (features) {Leakage-safe\\features and labels};
+\node[box,right=of features] (mlp) {MLP training\\and validation};
+\node[box,right=of mlp] (risk) {Risk scores\\for four docks};
+\node[decision,below=13mm of risk] (active) {Active?};
+\node[box,left=of active] (aco) {ACO or greedy\\route construction};
+\node[box,left=of aco] (validate) {Independent\\constraint checks};
+\node[box,left=of validate] (update) {Queue battery\\and overflow update};
+\draw[arrow] (events) -- (grid);
+\draw[arrow] (grid) -- (features);
+\draw[arrow] (features) -- (mlp);
+\draw[arrow] (mlp) -- (risk);
+\draw[arrow] (risk) -- (active);
+\draw[arrow] (active) -- node[above,font=\scriptsize]{yes} (aco);
+\draw[arrow] (aco) -- (validate);
+\draw[arrow] (validate) -- (update);
+\draw[arrow] (update.west) -| ++(-7mm,0) |- node[pos=0.25,left,font=\scriptsize]{next interval} (grid.south);
+\end{tikzpicture}
+\caption{Data and decision flow for the proposed MLP--ACO system.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{MLP architecture}
+
+The network has two hidden layers. The first maps seven inputs to 32 ReLU units, followed by 20\% dropout. The second maps 32 values to 16 ReLU units. A single sigmoid output produces a risk score. Glorot uniform initialisation is used for the dense-layer weights, and all biases start at zero.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  layer/.style={draw=navy,rounded corners=2pt,fill=paleblue,minimum width=25mm,minimum height=15mm,align=center,font=\small},
+  arrow/.style={-{Latex[length=2.4mm]},thick,draw=navy},
+  node distance=8mm
+]
+\node[layer] (input) {Input\\7 features};
+\node[layer,right=of input] (dense1) {Dense 32\\ReLU\\256 parameters};
+\node[layer,right=of dense1] (dropout) {Dropout\\rate 0.20\\0 parameters};
+\node[layer,right=of dropout] (dense2) {Dense 16\\ReLU\\528 parameters};
+\node[layer,right=of dense2] (output) {Dense 1\\Sigmoid\\17 parameters};
+\draw[arrow] (input) -- (dense1);
+\draw[arrow] (dense1) -- (dropout);
+\draw[arrow] (dropout) -- (dense2);
+\draw[arrow] (dense2) -- (output);
+\end{tikzpicture}
+\caption{MLP architecture with 801 trainable parameters.}
+\label{fig:architecture}
+\end{figure}
+
+The forward pass can be written as
+\begin{align}
+\mathbf{h}_1 &= \operatorname{ReLU}(\mathbf{W}_1\mathbf{x}+\mathbf{b}_1),\\
+\widetilde{\mathbf{h}}_1 &= \operatorname{Dropout}_{0.2}(\mathbf{h}_1),\\
+\mathbf{h}_2 &= \operatorname{ReLU}(\mathbf{W}_2\widetilde{\mathbf{h}}_1+\mathbf{b}_2),\\
+\hat{p} &= \sigma(\mathbf{w}_3^\top\mathbf{h}_2+b_3).
+\end{align}
+
+This structure is small enough to inspect yet able to model nonlinear interactions. ReLU avoids the saturation of sigmoid hidden units, dropout limits co-adaptation, and the sigmoid output matches binary classification. These choices follow standard feed-forward neural-network practice \cite{rumelhart1986,glorot2010,srivastava2014}.
+
+\subsection{Loss, optimiser, and class imbalance}
+
+The network minimises weighted binary cross-entropy:
+\begin{equation}
+\mathcal{L}_{\mathrm{BCE}}=-\frac{1}{N}\sum_{n=1}^{N}w_{y_n}
+\left[y_n\log \hat{p}_n+(1-y_n)\log(1-\hat{p}_n)\right].
+\label{eq:bce}
+\end{equation}
+Balanced weights computed from the training labels are $w_0=0.6095$ and $w_1=2.7833$. A positive error therefore has approximately 4.57 times the weight of a negative error. Adam is used with learning rate $10^{-3}$, $\beta_1=0.9$, $\beta_2=0.999$, and $\epsilon=10^{-7}$ \cite{kingma2015}. Training uses mini-batches of 256, at most 100 epochs, and early stopping on validation loss with patience eight and restoration of the best weights.
+
+\subsection{Risk-aware ACO routing}
+
+The drone study maps the four inbound points to four simulated satellite warehouses and adds a central depot. At interval $t$, available goods are the previous queue plus current arrivals. A warehouse is active when it contains goods and either its predicted risk exceeds a risk threshold or its current fill ratio exceeds the fill threshold. Urgency combines predicted risk and current fill:
+\begin{equation}
+u_{i,t}=0.60\,\hat{p}_{i,t}+0.40\min(1,r_{i,t}).
+\end{equation}
+
+An ant chooses a feasible next warehouse using pheromone $\tau_{ij}$ and heuristic desirability $\eta_{ij}$:
+\begin{equation}
+P(i\rightarrow j)=\frac{\tau_{ij}^{\alpha}\eta_{ij}^{\beta}}
+{\sum_{k\in\mathcal{F}}\tau_{ik}^{\alpha}\eta_{ik}^{\beta}},
+\qquad
+\eta_{ij}=\frac{\varepsilon+u_j}{\varepsilon+d_{ij}},
+\end{equation}
+where $\mathcal{F}$ contains only warehouses that can be visited without violating payload or the energy required to return to the depot. The implementation uses $\alpha=1$, $\beta=2$, 30 ants, at most 100 iterations, evaporation 0.10, and a stall limit of 20 iterations. Pheromone is clipped to a fixed numerical range. This follows the constructive and iterative logic of ant-colony routing \cite{dorigo1997}.
+
+The ACO objective is
+\begin{equation}
+J=0.30\frac{E_{\mathrm{used}}}{\sum_d B_d+\varepsilon}
++0.70\frac{\sum_i u_iR_i}{\sum_i u_iD_i+\varepsilon},
+\label{eq:aco-objective}
+\end{equation}
+where $D_i$ is active demand and $R_i$ is remaining demand after pickup. The constraints are
+\begin{align}
+\sum_i x_{d,i} &\leq C_d^{\mathrm{payload}},\\
+E(\text{route}_d) &\leq B_d^{\mathrm{available}},\\
+x_{d,i} &>0 \Rightarrow i\in\text{route}_d,\\
+\sum_d x_{d,i} &\leq D_i.
+\end{align}
+Every route starts and ends at node 0. The battery check includes the energy required to return from a candidate warehouse, rather than checking only the next leg.
+
+\subsection{Theory-to-code mapping}
+
+\begin{table}[H]
+\centering
+\caption{Mapping from computational concepts to implementation}
+\label{tab:theory-code}
+\small
+\begin{tabularx}{\textwidth}{p{0.20\textwidth}Yp{0.30\textwidth}}
+\toprule
+Component & Implemented behaviour & Main source file \\
+\midrule
+Interval grid & Aggregates events and inserts zero-arrival rows for every dock and time bin & \code{src/data_pipeline.py} \\
+Historical state & Runs a fixed fullest-first policy without access to future arrivals & \code{src/queue_simulator.py} \\
+Features and labels & Builds seven features, future no-drone labels, boundary gaps, and chronological splits & \code{src/feature_builder.py} \\
+MLP training & Fits the scaler, class weights, MLP, early stopping, and validation threshold & \code{src/train_mlp_aco.py} and the baseline notebook \\
+Risk inference & Enforces saved feature order and returns per-warehouse risk scores & \code{src/predict_risk.py} \\
+ACO & Constructs feasible multi-drone routes and updates pheromone & \code{src/aco_optimizer.py} \\
+Greedy baselines & Implements nearest-first and fullest-first policies & \code{src/baselines.py} \\
+Validation & Recomputes payload, battery, visited-pickup, and demand constraints independently & \code{src/solution_validator.py} \\
+Rolling simulation & Updates queues, battery, overflow, and route logs over time & \code{src/rolling_simulation.py} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Experimental Method}
+
+\subsection{Reproducibility settings}
+
+The verified MLP run uses seed 42 for Python, NumPy, TensorFlow, and dropout. Deterministic TensorFlow operations are requested where supported. The environment recorded Python 3.9.6, TensorFlow 2.20.0, Keras 3.10.0, NumPy 2.0.2, pandas 2.3.3, and scikit-learn 1.6.1. Exact bitwise equality across hardware and library versions is not guaranteed.
+
+\begin{table}[H]
+\centering
+\caption{Main MLP hyperparameters}
+\label{tab:hyperparameters}
+\small
+\begin{tabular}{ll@{\qquad}ll}
+\toprule
+Parameter & Value & Parameter & Value \\
+\midrule
+Interval & 15 minutes & Horizon & 4 intervals \\
+Buffer capacity & 20 units & Congestion level & 16 units \\
+Hidden units & 32, 16 & Dropout & 0.20 \\
+Learning rate & 0.001 & Batch size & 256 \\
+Maximum epochs & 100 & Early-stopping patience & 8 \\
+Training boundary & Day 60 & Validation boundary & Day 74 \\
+Threshold rule & Maximum validation F1 & Selected threshold & 0.9583001 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Evaluation metrics}
+
+Accuracy alone is unsuitable because only 12.24\% of test observations are positive. Precision measures how many warnings are correct. Recall measures how many congestion events are detected. F1 balances precision and recall. Balanced accuracy averages sensitivity and specificity. Average precision summarises the precision--recall curve and is more informative than accuracy when the positive class is rare \cite{saito2015}. ROC--AUC is also reported, but it can appear optimistic under severe imbalance. The confusion matrix keeps the operational meaning of false alarms and missed congestion visible.
+
+For routing, the planned metrics are total overflow, total collected goods, energy, distance, number of sorties, percentage of active demand left behind, algorithm runtime, and constraint violations. A complete comparison should report mean and standard deviation across ten ACO seeds and compare nearest-first, fullest-first, ACO using only current fill, and MLP--ACO. These operational outputs were not present when this report was generated.
+
+\section{Results}
+
+\subsection{Training behaviour}
+
+Training ran for 41 epochs. Validation loss reached its minimum of 0.06323 at epoch 33. Eight subsequent epochs did not improve it, so early stopping restored epoch-33 weights. Training loss continued to fall slightly while validation loss rose, indicating mild overfitting after epoch 33 rather than a severe divergence.
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}[t]{0.48\textwidth}
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\textwidth,height=5.0cm,
+  xlabel={Epoch},ylabel={Binary cross-entropy},
+  xmin=1,xmax=41,ymin=0.04,ymax=0.58,
+  grid=major,grid style={draw=gray!20},
+  legend style={font=\scriptsize,at={(0.97,0.97)},anchor=north east},
+]
+\addplot[blue,thick,mark=*] coordinates {
+ (1,0.54721) (5,0.12250) (10,0.11433) (15,0.10781) (20,0.10331)
+ (25,0.10115) (29,0.10086) (33,0.09986) (37,0.09937) (41,0.09767)};
+\addlegendentry{Training}
+\addplot[navy,dashed,thick,mark=square*] coordinates {
+ (1,0.21693) (5,0.07747) (10,0.07394) (15,0.07028) (20,0.06661)
+ (25,0.06567) (29,0.06346) (33,0.06323) (37,0.06438) (41,0.06404)};
+\addlegendentry{Validation}
+\addplot[red!65,dotted,very thick] coordinates {(33,0.04) (33,0.58)};
+\end{axis}
+\end{tikzpicture}
+\caption{Loss history. The vertical line marks the selected epoch.}
+\end{subfigure}
+\hfill
+\begin{subfigure}[t]{0.48\textwidth}
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\textwidth,height=5.0cm,
+  xlabel={Epoch},ylabel={PR--AUC},
+  xmin=1,xmax=41,ymin=0.60,ymax=1.00,
+  grid=major,grid style={draw=gray!20},
+  legend style={font=\scriptsize,at={(0.97,0.25)},anchor=south east},
+]
+\addplot[blue,thick,mark=*] coordinates {
+ (1,0.62255) (5,0.96233) (10,0.96968) (15,0.97349) (20,0.97514)
+ (25,0.97667) (29,0.97672) (33,0.97655) (37,0.97664) (41,0.97717)};
+\addlegendentry{Training}
+\addplot[navy,dashed,thick,mark=square*] coordinates {
+ (1,0.97275) (5,0.97485) (10,0.98212) (15,0.98473) (18,0.98511)
+ (25,0.98370) (29,0.98433) (33,0.98433) (37,0.98434) (41,0.98455)};
+\addlegendentry{Validation}
+\end{axis}
+\end{tikzpicture}
+\caption{PR--AUC history. Validation PR--AUC peaks earlier than validation loss.}
+\end{subfigure}
+\caption{Selected points from the recorded 41-epoch training history.}
+\label{fig:training-history}
+\end{figure}
+
+Epoch 33 has training accuracy 98.29\%, training precision 96.14\%, training recall 94.29\%, and training PR--AUC 97.65\%. The corresponding validation values at the default 0.5 threshold are 98.97\% accuracy, 97.35\% precision, 94.27\% recall, and 98.43\% PR--AUC. The highest validation PR--AUC occurs at epoch 18, but model selection follows the declared validation-loss rule.
+
+\subsection{Threshold selection and held-out performance}
+
+The final decision threshold is chosen by maximising validation F1, not by inspecting the test set. The selected value is 0.9583001. Its high value does not imply calibrated probabilities because class weighting alters the relationship between the sigmoid score and empirical prevalence.
+
+\begin{table}[H]
+\centering
+\caption{Validation and test performance at the selected threshold}
+\label{tab:metrics}
+\small
+\begin{tabular}{lrr}
+\toprule
+Metric & Validation & Test \\
+\midrule
+Observations & 5,360 & 5,532 \\
+Positive support & 663 & 677 \\
+Accuracy & 99.16\% & 98.66\% \\
+Balanced accuracy & 96.93\% & 95.17\% \\
+Precision & 99.20\% & 98.39\% \\
+Recall & 93.97\% & 90.55\% \\
+F1 & 96.51\% & 94.31\% \\
+Average precision & 97.91\% & 97.32\% \\
+ROC--AUC & 99.72\% & 99.57\% \\
+Brier score & Not reported & 0.0154 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The test confusion matrix contains 4,845 true negatives, 10 false positives, 64 false negatives, and 613 true positives.
+
+\begin{table}[H]
+\centering
+\caption{Test confusion matrix}
+\label{tab:confusion}
+\begin{tabular}{cc|cc}
+\toprule
+& & \multicolumn{2}{c}{Predicted class} \\
+& & No congestion & Congestion \\
+\midrule
+\multirow{2}{*}{Actual class} & No congestion & \cellcolor{goodgreen}\textbf{4,845} & \cellcolor{warnorange}\textbf{10} \\
+& Congestion & \cellcolor{warnorange}\textbf{64} & \cellcolor{goodgreen}\textbf{613} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The model correctly detects 613 of 677 positive cases and misses 64, corresponding to a 9.45\% miss rate. Only 10 of 623 alerts are false alarms. A classifier that always predicts no congestion would achieve 87.76\% accuracy, so the result is not explained by majority-class accuracy alone. The high F1 and average precision provide stronger evidence that the model separates the simulated classes.
+
+\subsection{Per-dock support and generalisation limit}
+
+The headline metrics do not provide equal evidence for all docks. Every positive validation and test case belongs to Dock~1. Each dock contributes 1,383 test rows, but Docks~2--4 contain only negative, zero-arrival observations.
+
+\begin{table}[H]
+\centering
+\caption{Test support by dock}
+\label{tab:per-dock}
+\small
+\begin{tabularx}{\textwidth}{lrrrrY}
+\toprule
+Dock & Test rows & Positives & Negatives & Accuracy & Interpretable positive-class metrics \\
+\midrule
+1 & 1,383 & 677 & 706 & 94.65\% & Precision 98.39\%, recall 90.55\%, F1 94.31\% \\
+2 & 1,383 & 0 & 1,383 & 100\% & No; positive class absent \\
+3 & 1,383 & 0 & 1,383 & 100\% & No; positive class absent \\
+4 & 1,383 & 0 & 1,383 & 100\% & No; positive class absent \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The combined metrics are therefore partly inflated by 4,149 easy negative rows from Docks~2--4. The Dock~1-only result remains strong, so the performance is not entirely an artefact of those rows. The defensible conclusion is that the MLP predicts the current simulated target well for Dock~1; the test set does not establish congestion detection for Docks~2--4.
+
+\subsection{Routing implementation verification}
+
+The current codebase includes ACO, greedy baselines, an exact small-instance reference, a chronological rolling simulator, metrics, and independent feasibility validation. Ten unit tests pass. They verify full-grid aggregation, preservation of distinct simultaneous events, label boundary behaviour, absence of future information in current features, drone-only queue updates, ACO determinism at a fixed seed, collection under sufficient capacity, graceful remaining demand under insufficient capacity, payload and return-battery limits, and agreement between route legs and energy use.
+
+This is engineering evidence that the routing implementation respects its declared constraints. It is not evidence that MLP--ACO reduces overflow or energy relative to the baselines. The supplied repository contains no completed \code{outputs/tables/baseline_comparison.csv} and no compatible \code{model_outputs_aco} artifacts. Operational superiority must therefore remain unclaimed.
+
+\section{Discussion}
+
+\subsection{Answer to the research question}
+
+The MLP provides a strong predictive baseline for the simulated congestion label. It improves substantially over the always-negative accuracy baseline, retains high recall at very high precision, and shows only mild overfitting. Within the observed Dock~1 test regime, recent arrivals and current queue state contain enough information to predict the next-hour threshold crossing.
+
+The second part of the research question remains open. A risk-aware ACO policy is implemented and its solutions are checked for feasibility, but no end-to-end comparison demonstrates that using predicted risk improves overflow, collection, or energy. The report therefore supports feasibility of the integration, not operational benefit.
+
+\subsection{Training loss versus the practical objective}
+
+Binary cross-entropy and the operational objective answer different questions. BCE rewards accurate probabilities for the simulated label. Warehouse operation cares about missed congestion, overflow volume, unnecessary sorties, energy, and uncollected goods. A model can reduce BCE without improving a specific operating point. For example, shifting a positive score from 0.96 to 0.90 can improve calibration yet turn a correct alert into a false negative under the selected threshold of 0.9583. Conversely, an overconfident score can trigger an energy-consuming trip even when no overflow would occur.
+
+The project mitigates this mismatch in three ways. First, it reports precision, recall, F1, average precision, and the confusion matrix in addition to loss. Second, it selects the classification threshold on validation data rather than fixing 0.5. Third, the routing layer uses a separate objective that penalises risk-weighted remaining goods and normalised energy. The mismatch is not fully resolved because the MLP is trained independently of downstream routing cost. A stronger future method would select the alert threshold using explicit costs or train a decision-aware model whose loss approximates expected overflow and dispatch cost.
+
+\subsection{Implications}
+
+The high Dock~1 performance suggests that a small feed-forward network can be sufficient when queue state and short rolling history are informative. This is valuable because the model is inexpensive to train, easy to deploy, and simple enough to explain during assessment. The selected threshold produces very few false alarms, but the 64 missed positive cases remain important. If overflow is more costly than an unnecessary trip, the operating threshold should favour recall rather than maximum F1.
+
+The data also show why a technically correct pipeline can still support an overly broad claim. Chronological splitting prevents temporal leakage, yet the future period contains almost no evidence about three docks. Correct evaluation procedure does not compensate for missing coverage. The deployment claim must match the support in the held-out data.
+
+\subsection{Limitations}
+
+\begin{enumerate}
+  \item \textbf{Simulated target.} Queue length and congestion are generated from assumed service rates and buffer capacity. The model predicts the simulator, not directly observed warehouse congestion.
+  \item \textbf{Dock coverage shift.} Docks~2--4 end early. Validation and test cannot measure their positive-class recall, F1, or AUC.
+  \item \textbf{Ambiguous zero intervals.} Missing or inactive coverage is encoded in the same way as an active dock with zero arrivals.
+  \item \textbf{Dominant Dock 1.} Dock~1 contains 93.26\% of inbound events, so a shared model is driven mainly by its operating pattern.
+  \item \textbf{Uncalibrated score.} Weighted BCE and F1-based threshold selection can produce useful ranking without producing a calibrated probability.
+  \item \textbf{Limited feature set.} The baseline excludes hour-of-day, shift, robot state, downtime, service completions, and SKU mixture.
+  \item \textbf{Different queue models.} The verified MLP artifacts use a fixed service-rate queue with capacity 20. The drone-only pipeline uses larger simulated capacities and removes goods only through pickup. The old model must not be inserted into the new simulator without retraining.
+  \item \textbf{Simplified drone physics.} The routing model omits weather, no-fly zones, collision avoidance, three-dimensional trajectories, charging schedules, and time windows.
+  \item \textbf{No operational result table.} Constraint tests validate implementation behaviour, but they do not measure policy quality over the held-out stream.
+\end{enumerate}
+
+\section{Recommended Refinements}
+
+The highest-priority improvement is to obtain data that distinguish an active dock with no arrivals from an inactive or unobserved dock. A \texttt{dock\_active} field, operating calendar, and verified reason for the early termination of Docks~2--4 would make the temporal grid meaningful. Real queue length, service completions, incident logs, and confirmed capacities would allow Eq.~\eqref{eq:target} to be replaced or validated against an observed target.
+
+Model evaluation should preserve chronological splits and report support for every metric. After using the current test findings to change the pipeline, a new untouched test period should be reserved. Probability calibration should be assessed on validation data using a reliability diagram and Brier score. Threshold selection should reflect the cost of false negatives, overflow, and unnecessary dispatches rather than F1 alone.
+
+The next model study should compare the current seven-feature MLP with interpretable baselines such as logistic regression and a current-fill threshold, then test time-of-day sine/cosine features, short-window trend and variance, and dock-activity indicators. More complex sequential models are justified only if they deliver a measurable improvement under the same chronological protocol.
+
+For routing, the complete experiment should first train the drone-compatible MLP using the same capacities and historical queue policy as deployment. It should then run nearest-first, fullest-first, ACO-current, and MLP--ACO on identical copies of the held-out arrival stream. ACO policies should use the ten configured seeds. Results should include mean, standard deviation, and confidence intervals for overflow, goods collected, energy, distance, remaining active demand, sorties, and runtime. Small active instances should be checked against the exact solver to quantify the ACO optimality gap.
+
+\section{Conclusion}
+
+The verified MLP is a compact and effective predictor of the current simulated congestion target. With 801 trainable parameters, it reaches 94.31\% test F1 and 97.32\% average precision under a leakage-aware chronological protocol. Its strongest evidence is for Dock~1. The result does not establish performance for congestion at Docks~2--4 or for real warehouse queues because those cases are not represented in the held-out labels and the target is simulated.
+
+The risk-aware routing framework is technically coherent: it converts current state and predicted risk into multi-drone routes, enforces payload and return-battery constraints, updates queues chronologically, and passes all supplied unit tests. Its operational value has not yet been measured. A complete project conclusion requires a drone-compatible trained model and a multi-seed comparison against reactive baselines. Until then, the correct claim is that the project demonstrates strong simulated congestion prediction and a feasible path from prediction to routing, not proven end-to-end operational improvement.
+
+\section*{Reproducibility Checklist}
+\addcontentsline{toc}{section}{Reproducibility Checklist}
+
+\begin{itemize}
+  \item Dataset file: \code{wepastacks_inbound_clean.csv}.
+  \item Verified MLP artifacts: \code{model_outputs/mlp_congestion.keras}, \code{feature_scaler.pkl}, \code{model_configuration.json}, \code{training_history.csv}, and \code{test_predictions.csv}.
+  \item Main MLP notebook: \code{src/MLP_inbound_congestion_training.ipynb}.
+  \item Integrated experiment configuration: \code{config/experiment.yaml}.
+  \item Routing entry point: \code{run_experiment.py}.
+  \item Test command: \code{python -m unittest discover -s tests -v}, using a temporary Python bytecode cache when required.
+  \item Current test status: 10 tests passed, 0 failed.
+  \item Required next outputs: a trained \code{model_outputs_aco} model and \code{outputs/tables/baseline_comparison.csv}.
+\end{itemize}
+
+\appendix
+\section{Configured Drone Experiment}
+
+\begin{table}[H]
+\centering
+\caption{Simulated warehouse coordinates and capacities}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Node & $x$ (km) & $y$ (km) & Capacity (cargo units) \\
+\midrule
+Central depot 0 & 0 & 0 & Not applicable \\
+Warehouse 1 & 3 & 4 & 200 \\
+Warehouse 2 & -5 & 2 & 80 \\
+Warehouse 3 & 6 & -3 & 80 \\
+Warehouse 4 & -4 & -6 & 80 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Simulated drone fleet}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Drone & Payload capacity & Battery maximum & Energy per kilometre \\
+\midrule
+1 & 30 & 30.0 & 1.0 \\
+2 & 30 & 30.0 & 1.0 \\
+3 & 20 & 22.0 & 1.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Battery is reset daily in the simulation. This represents replacement by a charged battery, not an optimised charging schedule. The values in this appendix are experimental assumptions and must not be attributed to the WEPAStacks warehouse.
+
+\section{Metric Definitions}
+
+For true positives $TP$, false positives $FP$, true negatives $TN$, and false negatives $FN$:
+\begin{align}
+\mathrm{Precision} &= \frac{TP}{TP+FP}, &
+\mathrm{Recall} &= \frac{TP}{TP+FN},\\
+\mathrm{Specificity} &= \frac{TN}{TN+FP}, &
+\mathrm{F1} &= \frac{2\,\mathrm{Precision}\,\mathrm{Recall}}
+{\mathrm{Precision}+\mathrm{Recall}},\\
+\mathrm{Balanced\ Accuracy} &= \frac{\mathrm{Recall}+\mathrm{Specificity}}{2}.
+\end{align}
+The Brier score is the mean squared difference between the predicted score and the binary target. It is included as a preliminary diagnostic, but a reliability plot is still required before the sigmoid output can be interpreted as a calibrated probability.
+
+\begin{thebibliography}{9}
+
+\bibitem{rumelhart1986}
+D. E. Rumelhart, G. E. Hinton, and R. J. Williams.
+Learning representations by back-propagating errors.
+\emph{Nature}, 323:533--536, 1986.
+
+\bibitem{glorot2010}
+X. Glorot and Y. Bengio.
+Understanding the difficulty of training deep feedforward neural networks.
+In \emph{Proceedings of AISTATS}, pages 249--256, 2010.
+
+\bibitem{srivastava2014}
+N. Srivastava, G. Hinton, A. Krizhevsky, I. Sutskever, and R. Salakhutdinov.
+Dropout: A simple way to prevent neural networks from overfitting.
+\emph{Journal of Machine Learning Research}, 15:1929--1958, 2014.
+
+\bibitem{kingma2015}
+D. P. Kingma and J. Ba.
+Adam: A method for stochastic optimization.
+In \emph{International Conference on Learning Representations}, 2015.
+
+\bibitem{dorigo1997}
+M. Dorigo and L. M. Gambardella.
+Ant colony system: A cooperative learning approach to the traveling salesman problem.
+\emph{IEEE Transactions on Evolutionary Computation}, 1(1):53--66, 1997.
+
+\bibitem{saito2015}
+T. Saito and M. Rehmsmeier.
+The precision-recall plot is more informative than the ROC plot when evaluating binary classifiers on imbalanced datasets.
+\emph{PLOS ONE}, 10(3):e0118432, 2015.
+
+\bibitem{projectdocs}
+WEPAStacks project documentation.
+\emph{Dataset Analysis Report, MLP Training Specification, MLP Training Report, and MLP--ACO--Drone Implementation Guide}.
+Internal assignment documents, 2026.
+
+\end{thebibliography}
+
+\end{document}

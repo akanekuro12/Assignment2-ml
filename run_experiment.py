@@ -1,4 +1,4 @@
-"""Run operational baselines and MLP-ACO on the held-out chronological period."""
+"""Run operational baselines, ACO and PSO on the held-out chronological period."""
 
 from __future__ import annotations
 
@@ -33,7 +33,10 @@ def main() -> None:
         help="Comma-separated policies; default comes from experiment.yaml.",
     )
     parser.add_argument("--max-intervals", type=int, default=None)
-    parser.add_argument("--aco-seeds", type=int, default=None, help="Limit the configured seed list.")
+    parser.add_argument(
+        "--optimizer-seeds", "--aco-seeds", dest="optimizer_seeds", type=int,
+        default=None, help="Limit the configured stochastic-optimizer seed list.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -47,7 +50,8 @@ def main() -> None:
     policies = args.policies or list(config["simulation"]["test_policies"])
 
     predictor = None
-    if "mlp_aco" in policies:
+    mlp_policies = {"mlp_aco", "mlp_pso"}
+    if mlp_policies.intersection(policies):
         model_directory = resolve_project_path(config["outputs"]["model_directory"], config)
         if not (model_directory / "mlp_congestion_aco.keras").exists():
             raise FileNotFoundError(
@@ -62,18 +66,22 @@ def main() -> None:
     for directory in (log_directory, route_directory, table_directory):
         directory.mkdir(parents=True, exist_ok=True)
 
-    configured_seeds = [int(value) for value in config["simulation"]["aco_seeds"]]
-    if args.aco_seeds is not None:
-        configured_seeds = configured_seeds[: args.aco_seeds]
+    seed_values = config["simulation"].get(
+        "optimizer_seeds", config["simulation"].get("aco_seeds", [config["seed"]])
+    )
+    configured_seeds = [int(value) for value in seed_values]
+    if args.optimizer_seeds is not None:
+        configured_seeds = configured_seeds[: args.optimizer_seeds]
     metric_rows = []
     for policy in policies:
-        seeds = configured_seeds if policy in {"aco_current", "mlp_aco"} else [int(config["seed"])]
+        stochastic = {"aco_current", "mlp_aco", "pso_current", "mlp_pso"}
+        seeds = configured_seeds if policy in stochastic else [int(config["seed"])]
         for seed in seeds:
             interval_log, route_log = run_simulation(
                 intervals,
                 config,
                 policy,
-                predictor=predictor if policy == "mlp_aco" else None,
+                predictor=predictor if policy in mlp_policies else None,
                 seed=seed,
             )
             suffix = f"{policy}_seed_{seed}"

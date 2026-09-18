@@ -14,6 +14,7 @@ from .baselines import fullest_first, nearest_first
 from .config_loader import warehouse_capacities, warehouse_coordinates
 from .domain import drones_from_config, euclidean_distance_matrix
 from .feature_builder import build_deployment_features
+from .pso_optimizer import optimize_pso
 from .routing_utils import active_demands, calculate_urgency, idle_solution
 from .solution_validator import unreachable_round_trips, validate_solution
 
@@ -22,7 +23,10 @@ class Predictor(Protocol):
     def predict_by_warehouse(self, features: pd.DataFrame) -> dict[int, float]: ...
 
 
-SUPPORTED_POLICIES = {"nearest_first", "fullest_first", "aco_current", "mlp_aco"}
+SUPPORTED_POLICIES = {
+    "nearest_first", "fullest_first", "aco_current", "mlp_aco",
+    "pso_current", "mlp_pso",
+}
 
 
 def run_simulation(
@@ -34,8 +38,8 @@ def run_simulation(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if policy not in SUPPORTED_POLICIES:
         raise ValueError(f"Unknown policy {policy!r}; expected one of {sorted(SUPPORTED_POLICIES)}")
-    if policy == "mlp_aco" and predictor is None:
-        raise ValueError("mlp_aco requires a trained risk predictor.")
+    if policy in {"mlp_aco", "mlp_pso"} and predictor is None:
+        raise ValueError(f"{policy} requires a trained risk predictor.")
 
     warehouses = [int(node) for node in config["data"]["warehouse_ids"]]
     capacities = warehouse_capacities(config)
@@ -54,6 +58,7 @@ def run_simulation(
     route_records: list[dict] = []
     mlp = config["mlp"]
     aco = config["aco"]
+    objective = config["objective"]
     base_seed = int(config["seed"] if seed is None else seed)
 
     for time_bin, raw_rows in intervals.groupby("time_bin", sort=True):
@@ -76,7 +81,7 @@ def run_simulation(
         else:
             risk = {node: 0.0 for node in warehouses}
 
-        use_risk = policy == "mlp_aco"
+        use_risk = policy in {"mlp_aco", "mlp_pso"}
         demand = active_demands(
             available=available,
             capacities=capacities,
@@ -85,8 +90,8 @@ def run_simulation(
             fill_threshold=float(mlp["congestion_threshold"]),
             use_risk=use_risk,
         )
-        probability_weight = float(aco["urgency_probability"]) if use_risk else 0.0
-        fill_weight = float(aco["urgency_fill"]) if use_risk else 1.0
+        probability_weight = float(objective["urgency_probability"]) if use_risk else 0.0
+        fill_weight = float(objective["urgency_fill"]) if use_risk else 1.0
         urgency = calculate_urgency(
             available, capacities, risk, probability_weight, fill_weight
         )
@@ -97,18 +102,31 @@ def run_simulation(
         elif policy == "nearest_first":
             solution = nearest_first(
                 demand, urgency, fleet, distance_matrix, node_to_index,
-                float(aco["weight_remaining"]), float(aco["weight_energy"]), central_node,
+                float(objective["weight_remaining"]), float(objective["weight_energy"]), central_node,
             )
         elif policy == "fullest_first":
             solution = fullest_first(
                 demand, urgency, fleet, distance_matrix, node_to_index, capacities,
-                float(aco["weight_remaining"]), float(aco["weight_energy"]), central_node,
+                float(objective["weight_remaining"]), float(objective["weight_energy"]), central_node,
             )
-        else:
+        elif policy in {"aco_current", "mlp_aco"}:
             interval_seed = (base_seed * 1_000_003 + int(time_bin)) % (2**32)
             solution = optimize_aco(
                 demand, urgency, fleet, distance_matrix, node_to_index, aco,
-                seed=interval_seed, central_node=central_node,
+                seed=interval_seed, central_node=central_node, objective_config=objective,
+            )
+        else:
+            interval_seed = (base_seed * 1_000_003 + int(time_bin)) % (2**32)
+            solution = optimize_pso(
+                demand=demand,
+                urgency=urgency,
+                drones=fleet,
+                distance_matrix=distance_matrix,
+                node_to_index=node_to_index,
+                pso_config=config["pso"],
+                objective_config=objective,
+                seed=interval_seed,
+                central_node=central_node,
             )
         runtime = time.perf_counter() - start
         violations = validate_solution(

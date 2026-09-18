@@ -32,7 +32,7 @@ def prepare_training_data(config: dict) -> tuple[pd.DataFrame, tuple[pd.Series, 
     distance_matrix, node_to_index, _ = euclidean_distance_matrix(coordinates)
     drones = drones_from_config(config)
     mlp = config["mlp"]
-    aco = config["aco"]
+    objective = config["objective"]
     state_table = simulate_historical_queue(
         intervals=intervals,
         capacities=capacities,
@@ -40,8 +40,8 @@ def prepare_training_data(config: dict) -> tuple[pd.DataFrame, tuple[pd.Series, 
         distance_matrix=distance_matrix,
         node_to_index=node_to_index,
         fill_threshold=float(mlp["congestion_threshold"]),
-        weight_remaining=float(aco["weight_remaining"]),
-        weight_energy=float(aco["weight_energy"]),
+        weight_remaining=float(objective["weight_remaining"]),
+        weight_energy=float(objective["weight_energy"]),
         central_node=int(config["simulation"]["central_node"]),
         battery_reset_policy=str(config["simulation"]["battery_reset_policy"]),
     )
@@ -109,9 +109,13 @@ def train(config: dict) -> dict[str, Any]:
     train_x, train_y, _ = splits["train"]
     validation_x, validation_y, _ = splits["validation"]
     test_x, test_y, test_rows = splits["test"]
-    train_x.loc[:, NUMERIC_FEATURES] = scaler.fit_transform(train_x[NUMERIC_FEATURES])
-    validation_x.loc[:, NUMERIC_FEATURES] = scaler.transform(validation_x[NUMERIC_FEATURES])
-    test_x.loc[:, NUMERIC_FEATURES] = scaler.transform(test_x[NUMERIC_FEATURES])
+    # Convert before assignment so pandas does not place floats into integer columns.
+    train_x[NUMERIC_FEATURES] = train_x[NUMERIC_FEATURES].astype(float)
+    validation_x[NUMERIC_FEATURES] = validation_x[NUMERIC_FEATURES].astype(float)
+    test_x[NUMERIC_FEATURES] = test_x[NUMERIC_FEATURES].astype(float)
+    train_x[NUMERIC_FEATURES] = scaler.fit_transform(train_x[NUMERIC_FEATURES])
+    validation_x[NUMERIC_FEATURES] = scaler.transform(validation_x[NUMERIC_FEATURES])
+    test_x[NUMERIC_FEATURES] = scaler.transform(test_x[NUMERIC_FEATURES])
 
     counts = train_y.value_counts().sort_index()
     class_weights = {

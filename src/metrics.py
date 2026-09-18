@@ -28,7 +28,7 @@ def operational_metrics(interval_log: pd.DataFrame) -> dict[str, float]:
         "risk_weighted_remaining_goods": weighted_remaining,
         "number_of_sorties": int(per_interval["sorties_interval"].sum()),
         "constraint_violations": int(interval_log["constraint_violations"].sum()),
-        "aco_runtime_seconds": float(per_interval["algorithm_runtime_seconds"].sum()),
+        "algorithm_runtime_seconds": float(per_interval["algorithm_runtime_seconds"].sum()),
     }
 
 

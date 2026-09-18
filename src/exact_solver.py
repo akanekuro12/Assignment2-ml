@@ -9,7 +9,7 @@ import numpy as np
 from scipy.optimize import linprog
 
 from .domain import DroneState, RoutingSolution, route_distance
-from .routing_utils import calculate_objective
+from .routing_utils import calculate_objective, idle_solution
 from .solution_validator import validate_solution
 
 
@@ -41,6 +41,8 @@ def solve_exact_small_instance(
     central_node: int = 0,
 ) -> RoutingSolution:
     """Enumerate routes and solve the optimal continuous pickup allocation by LP."""
+    if not demand:
+        return idle_solution(drones, demand, central_node)
     nodes = sorted(int(node) for node in demand)
     if len(nodes) > 4:
         raise ValueError("The exact reference solver is intentionally limited to four warehouses.")

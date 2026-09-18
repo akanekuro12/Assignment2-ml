@@ -57,10 +57,21 @@ aco:
   pheromone_max: 1000.0
   deposit_scale: 1.0
   stall_iterations: 20
+
+objective:
   weight_remaining: 0.70
   weight_energy: 0.30
   urgency_probability: 0.60
   urgency_fill: 0.40
+
+pso:
+  particles: 30
+  iterations: 100
+  inertia: 0.70
+  cognitive: 1.50
+  social: 1.50
+  velocity_limit: 0.20
+  stall_iterations: 20
 
 simulation:
   central_node: 0
@@ -71,7 +82,9 @@ simulation:
     - fullest_first
     - aco_current
     - mlp_aco
-  aco_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    - pso_current
+    - mlp_pso
+  optimizer_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 outputs:
   model_directory: model_outputs_aco

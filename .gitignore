@@ -4,4 +4,6 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 model_outputs/
+model_outputs_aco/
+outputs/
 mlp_congestion_results.zip
