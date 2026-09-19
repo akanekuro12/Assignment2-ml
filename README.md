@@ -1,6 +1,8 @@
-# WEPAStacks MLP–ACO/PSO Drone Simulation
+# WEPAStacks MLP–ACO Drone Simulation
 
 Dự án sử dụng luồng pallet inbound thật của WEPAStacks để tạo nhu cầu theo thời gian. Bốn inbound point được ánh xạ thành bốn kho vệ tinh **giả lập**; vị trí kho, sức chứa, depot trung tâm và đội drone đều là giả định thí nghiệm.
+
+**Phạm vi thuật toán:** MLP–ACO là phương pháp chính của dự án. Nearest-first, fullest-first và ACO-current là các baseline chính.
 
 Notebook MLP cũ ở `src/MLP_inbound_congestion_training.ipynb` và artifacts trong `model_outputs/` được giữ nguyên để làm baseline. Pipeline mới không dùng `service_rate`: hàng chỉ rời queue khi được drone lấy.
 
@@ -38,7 +40,7 @@ nếu, trong giả định không có drone ở bốn interval tiếp theo, lư�
 Trong rolling simulation, hệ thống nhận trạng thái hiện tại của bốn kho và trả về:
 
 1. MLP trả `risk_probability[i, t]` trong `[0, 1]` cho mỗi kho.
-2. ACO hoặc PSO trả route của mỗi drone, lượng pickup tại mỗi kho, năng lượng, hàng còn lại và objective value.
+2. ACO trả route của mỗi drone, lượng pickup tại mỗi kho, năng lượng, hàng còn lại và objective value.
 3. Mỗi route bắt đầu và kết thúc tại depot `0`.
 
 ## 2. Data flow
@@ -56,7 +58,7 @@ Held-out arrivals
   -> current queue + arrivals
   -> MLP risk probability
   -> active warehouse decision
-  -> ACO or PSO routes and pickups
+  -> ACO routes and pickups
   -> constraint validation
   -> queue, overflow and battery update
   -> operational metrics
@@ -74,12 +76,10 @@ Held-out arrivals
 | Loss | Weighted binary cross-entropy | `src/train_mlp_aco.py` |
 | ACO transition | `tau(i,j)^alpha * eta(i,j)^beta` | `src/aco_optimizer.py` |
 | Heuristic | `(epsilon + urgency) / (epsilon + distance)` | `src/aco_optimizer.py` |
-| PSO update | `v = wv + c1*r1*(pbest-x) + c2*r2*(gbest-x)` | `src/pso_optimizer.py` |
-| PSO decoder | Random keys → drone order, visit limit và warehouse order | `src/pso_optimizer.py` |
 | Return reserve | Pin phải đủ đi tới node và quay về depot | `src/aco_optimizer.py` |
 | Feasibility | Payload, battery, visited pickup, demand | `src/solution_validator.py` |
 
-ACO và PSO tối thiểu hóa cùng một objective:
+ACO tối thiểu hóa objective sau:
 
 ```text
 objective = weight_energy * normalized_energy
@@ -107,10 +107,10 @@ Artifacts mới được lưu trong `model_outputs_aco/`. File `.keras` là mode
 Chạy một smoke experiment ngắn:
 
 ```bash
-python run_experiment.py --max-intervals 20 --optimizer-seeds 1
+python run_experiment.py --max-intervals 20 --aco-seeds 1
 ```
 
-Chạy thí nghiệm đầy đủ theo các policy và 10 optimizer seeds trong config:
+Chạy thí nghiệm đầy đủ theo các policy và 10 ACO seeds trong config:
 
 ```bash
 python run_experiment.py
@@ -135,7 +135,6 @@ src/feature_builder.py       features, labels và chronological splits
 src/train_mlp_aco.py         train và lưu MLP artifacts
 src/predict_risk.py          deployment interface của MLP
 src/aco_optimizer.py         multi-drone ACO
-src/pso_optimizer.py         random-key multi-drone PSO
 src/baselines.py             nearest-first và fullest-first
 src/exact_solver.py          exhaustive reference cho tối đa bốn kho
 src/rolling_simulation.py    end-to-end operational simulation
@@ -150,5 +149,4 @@ src/metrics.py               operational metrics và multi-seed summary
 - Một event được gọi là `standardized cargo unit`, không khẳng định drone chở nguyên pallet thật.
 - Dock 1 chiếm phần lớn sự kiện; validation/test có thể không có positive label ở Dock 2–4.
 - Probability của MLP có thể cần calibration.
-- Với chỉ bốn kho, exact reference cần được dùng để kiểm tra ACO và PSO trên các instance nhỏ.
-- ACO phù hợp tự nhiên với route rời rạc; PSO cần random-key decoder nên kết quả phụ thuộc cả swarm update lẫn cách decode.
+- Với chỉ bốn kho, exact reference cần được dùng để kiểm tra ACO trên các instance nhỏ.

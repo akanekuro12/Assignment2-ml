@@ -1,1 +1,1 @@
-"""Unit tests for the MLP-ACO/PSO pipeline."""
+"""Unit tests for the MLP-ACO pipeline."""

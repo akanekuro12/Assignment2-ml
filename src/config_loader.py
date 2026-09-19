@@ -40,7 +40,7 @@ def warehouse_coordinates(config: Dict[str, Any]) -> Dict[int, tuple[float, floa
 
 def validate_config(config: Dict[str, Any]) -> None:
     required = {
-        "data", "mlp", "warehouses", "drones", "aco", "pso",
+        "data", "mlp", "warehouses", "drones", "aco",
         "objective", "simulation", "outputs",
     }
     missing = required.difference(config)
@@ -76,13 +76,6 @@ def validate_config(config: Dict[str, Any]) -> None:
         value = float(config["mlp"][name])
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"mlp.{name} must be in [0, 1].")
-
-    pso = config["pso"]
-    if int(pso["particles"]) <= 0 or int(pso["iterations"]) <= 0:
-        raise ValueError("PSO particles and iterations must be positive.")
-    if float(pso["velocity_limit"]) <= 0:
-        raise ValueError("PSO velocity_limit must be positive.")
-
 
 def resolve_project_path(value: str | Path, config: Dict[str, Any] | None = None) -> Path:
     path = Path(value).expanduser()

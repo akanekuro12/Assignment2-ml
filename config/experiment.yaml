@@ -64,15 +64,6 @@ objective:
   urgency_probability: 0.60
   urgency_fill: 0.40
 
-pso:
-  particles: 30
-  iterations: 100
-  inertia: 0.70
-  cognitive: 1.50
-  social: 1.50
-  velocity_limit: 0.20
-  stall_iterations: 20
-
 simulation:
   central_node: 0
   historical_queue_policy: fullest_first
@@ -82,9 +73,7 @@ simulation:
     - fullest_first
     - aco_current
     - mlp_aco
-    - pso_current
-    - mlp_pso
-  optimizer_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  aco_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 outputs:
   model_directory: model_outputs_aco

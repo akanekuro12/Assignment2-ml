@@ -1,4 +1,4 @@
-"""Run operational baselines, ACO and PSO on the held-out chronological period."""
+"""Run operational baselines and ACO on the held-out chronological period."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ def main() -> None:
     )
     parser.add_argument("--max-intervals", type=int, default=None)
     parser.add_argument(
-        "--optimizer-seeds", "--aco-seeds", dest="optimizer_seeds", type=int,
-        default=None, help="Limit the configured stochastic-optimizer seed list.",
+        "--aco-seeds", type=int, default=None,
+        help="Limit the configured ACO seed list.",
     )
     args = parser.parse_args()
 
@@ -50,7 +50,7 @@ def main() -> None:
     policies = args.policies or list(config["simulation"]["test_policies"])
 
     predictor = None
-    mlp_policies = {"mlp_aco", "mlp_pso"}
+    mlp_policies = {"mlp_aco"}
     if mlp_policies.intersection(policies):
         model_directory = resolve_project_path(config["outputs"]["model_directory"], config)
         if not (model_directory / "mlp_congestion_aco.keras").exists():
@@ -66,15 +66,13 @@ def main() -> None:
     for directory in (log_directory, route_directory, table_directory):
         directory.mkdir(parents=True, exist_ok=True)
 
-    seed_values = config["simulation"].get(
-        "optimizer_seeds", config["simulation"].get("aco_seeds", [config["seed"]])
-    )
+    seed_values = config["simulation"].get("aco_seeds", [config["seed"]])
     configured_seeds = [int(value) for value in seed_values]
-    if args.optimizer_seeds is not None:
-        configured_seeds = configured_seeds[: args.optimizer_seeds]
+    if args.aco_seeds is not None:
+        configured_seeds = configured_seeds[: args.aco_seeds]
     metric_rows = []
     for policy in policies:
-        stochastic = {"aco_current", "mlp_aco", "pso_current", "mlp_pso"}
+        stochastic = {"aco_current", "mlp_aco"}
         seeds = configured_seeds if policy in stochastic else [int(config["seed"])]
         for seed in seeds:
             interval_log, route_log = run_simulation(
