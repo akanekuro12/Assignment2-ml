@@ -14,11 +14,14 @@ class DroneState:
     payload_capacity: float
     battery_max: float
     energy_per_km: float
+    max_route_distance_km: float | None = None
     available_battery: float | None = None
 
     def __post_init__(self) -> None:
         if self.available_battery is None:
             self.available_battery = float(self.battery_max)
+        if self.max_route_distance_km is None:
+            self.max_route_distance_km = float("inf")
 
     def reset_battery(self) -> None:
         self.available_battery = float(self.battery_max)
@@ -29,6 +32,7 @@ class DroneState:
             payload_capacity=self.payload_capacity,
             battery_max=self.battery_max,
             energy_per_km=self.energy_per_km,
+            max_route_distance_km=self.max_route_distance_km,
             available_battery=self.available_battery,
         )
 
@@ -60,6 +64,7 @@ def drones_from_config(config: Mapping) -> list[DroneState]:
             payload_capacity=float(item["payload_capacity"]),
             battery_max=float(item["battery_max"]),
             energy_per_km=float(item["energy_per_km"]),
+            max_route_distance_km=float(item["max_route_distance_km"]),
         )
         for item in config["drones"]["fleet"]
     ]

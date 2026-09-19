@@ -1,5 +1,12 @@
-HƯỚNG DẪN IMPLEMENT WEPA -> MLP -> ACO -> DRONE
+TÀI LIỆU CŨ: HƯỚNG DẪN MULTI-DRONE KHÔNG CÒN LÀ THIẾT KẾ CHÍNH
 =================================================
+
+Thiết kế hiện hành đã được đơn giản hóa thành một drone và một route mỗi interval.
+Không dùng tài liệu này để triển khai mới. Xem:
+
+docs/implementation_guide_single_drone_mlp_aco_vi.md
+
+Phần bên dưới chỉ được giữ lại làm lịch sử thiết kế.
 
 MỤC TIÊU
 --------

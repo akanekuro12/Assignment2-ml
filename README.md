@@ -1,16 +1,15 @@
-# WEPAStacks MLP–ACO Drone Simulation
+# WEPAStacks: MLP + ACO cho một drone
 
-Dự án sử dụng luồng pallet inbound thật của WEPAStacks để tạo nhu cầu theo thời gian. Bốn inbound point được ánh xạ thành bốn kho vệ tinh **giả lập**; vị trí kho, sức chứa, depot trung tâm và đội drone đều là giả định thí nghiệm.
+Dự án tách thành hai bài toán độc lập:
 
-**Phạm vi thuật toán:** MLP–ACO là phương pháp chính của dự án. Nearest-first, fullest-first và ACO-current là các baseline chính.
+1. **MLP dự đoán:** với từng kho, trả về xác suất kho sẽ đạt mức đầy 80% trong 60 phút tới.
+2. **ACO định tuyến:** chỉ nhận các kho có xác suất `>= 0.70`, rồi tìm một route ngắn cho đúng một drone dưới các giới hạn vật lý.
 
-Notebook MLP cũ ở `src/MLP_inbound_congestion_training.ipynb` và artifacts trong `model_outputs/` được giữ nguyên để làm baseline. Pipeline mới không dùng `service_rate`: hàng chỉ rời queue khi được drone lấy.
+Không có `urgency`, `projected_stock` hoặc `required_pickup` trong ACO. Các kho có xác suất dưới 70% bị loại trước khi ACO chạy và không thể xuất hiện trong route.
 
-## 1. Task definition và system interface
+## 1. Dữ liệu và MLP
 
-### Training input
-
-Mỗi observation biểu diễn một kho tại cuối một interval 15 phút. Vector đầu vào có đúng bảy phần tử theo thứ tự:
+Mỗi observation là trạng thái một kho ở cuối interval 15 phút. Vector input có bảy phần tử:
 
 ```text
 [buffer_fill_ratio,
@@ -19,134 +18,100 @@ Mỗi observation biểu diễn một kho tại cuối một interval 15 phút. 
  dock_1, dock_2, dock_3, dock_4]
 ```
 
-- `buffer_fill_ratio = available_before_pickup / warehouse_capacity`.
-- `arrivals_15m` là số cargo unit đến trong interval hiện tại.
-- `mean_arrivals_60m` là trung bình interval hiện tại và ba interval trước.
-- Bốn trường `dock_*` là one-hot encoding.
-- Chỉ thông tin tại hoặc trước thời điểm `t` được dùng làm input.
-
-### Training output
-
-Output target là biến nhị phân:
+Target là nhãn nhị phân `congestion = 1` nếu lượng hàng trong kịch bản không có drone đạt ít nhất 80% capacity trong bốn interval tiếp theo. Dữ liệu tương lai chỉ tạo label, không đi vào input.
 
 ```text
-congestion = 1
+Input(7) -> Dense(32, ReLU) -> Dense(16, ReLU) -> Dense(1, Sigmoid)
 ```
 
-nếu, trong giả định không có drone ở bốn interval tiếp theo, lượng hàng đạt ít nhất 80% sức chứa kho. Future arrivals chỉ được dùng để tạo label lịch sử, không được đưa vào feature.
-
-### Deployment input và output
-
-Trong rolling simulation, hệ thống nhận trạng thái hiện tại của bốn kho và trả về:
-
-1. MLP trả `risk_probability[i, t]` trong `[0, 1]` cho mỗi kho.
-2. ACO trả route của mỗi drone, lượng pickup tại mỗi kho, năng lượng, hàng còn lại và objective value.
-3. Mỗi route bắt đầu và kết thúc tại depot `0`.
-
-## 2. Data flow
+Output sigmoid là xác suất trong `[0, 1]`, không phải nhãn binary. Ngưỡng vận hành cố định là `0.70`:
 
 ```text
-CSV events
-  -> clean and aggregate into 15-minute intervals
-  -> full time-bin x warehouse grid
-  -> fixed fullest-first historical simulation
-  -> leakage-safe MLP features and labels
-  -> chronological train / validation / test
-  -> saved Keras model + scaler + configuration
-
-Held-out arrivals
-  -> current queue + arrivals
-  -> MLP risk probability
-  -> active warehouse decision
-  -> ACO routes and pickups
-  -> constraint validation
-  -> queue, overflow and battery update
-  -> operational metrics
+active_warehouses = {i | probability[i] >= 0.70 and available[i] > 0}
 ```
 
-## 3. Theory-to-code mapping
+Dữ liệu được chia theo thời gian: ngày 1–60 train, ngày 61–74 validation, từ ngày 75 trở đi test. Scaler chỉ fit trên train.
 
-| Khái niệm | Công thức hoặc hành vi | Code |
-|---|---|---|
-| Full grid | Mọi time bin có đủ bốn kho | `src/data_pipeline.py` |
-| Queue | `available = Q + arrivals` | `src/queue_simulator.py`, `src/rolling_simulation.py` |
-| Queue update | `Q_next = min(capacity, max(0, available - pickup))` | `src/rolling_simulation.py` |
-| Overflow | `max(0, available - pickup - capacity)` | `src/rolling_simulation.py` |
-| MLP | Dense(32, ReLU) → Dense(16, ReLU) → Dense(1, sigmoid) | `src/train_mlp_aco.py` |
-| Loss | Weighted binary cross-entropy | `src/train_mlp_aco.py` |
-| ACO transition | `tau(i,j)^alpha * eta(i,j)^beta` | `src/aco_optimizer.py` |
-| Heuristic | `(epsilon + urgency) / (epsilon + distance)` | `src/aco_optimizer.py` |
-| Return reserve | Pin phải đủ đi tới node và quay về depot | `src/aco_optimizer.py` |
-| Feasibility | Payload, battery, visited pickup, demand | `src/solution_validator.py` |
+## 2. ACO một drone
 
-ACO tối thiểu hóa objective sau:
+Input của ACO gồm danh sách kho đã qua bộ lọc 70% và lượng hàng hiện có, ma trận khoảng cách, một drone, pheromone và các tham số ACO.
+
+Mỗi ant xây một route bắt đầu tại depot `0`. Ở mỗi bước, ant chỉ xét kho chưa ghé mà drone vẫn đủ pin và đủ giới hạn quãng đường để đi tới kho đó rồi quay về depot. Xác suất chọn cạnh chỉ dựa trên pheromone và khoảng cách:
 
 ```text
-objective = weight_energy * normalized_energy
-          + weight_remaining * normalized_risk_weighted_remaining
+score(i, j) = pheromone(i, j)^alpha * (1 / distance(i, j))^beta
 ```
 
-Loss của MLP và objective vận hành không giống nhau. Binary cross-entropy giúp học xác suất congestion, trong khi mục tiêu thực tế còn quan tâm overflow, hàng thu gom và năng lượng. Vì vậy dự án đánh giá cả prediction metrics lẫn operational metrics.
+Objective:
 
-## 4. Chạy chương trình
+```text
+objective = 1000 * number_of_unvisited_active_warehouses
+          + 1 * route_distance
+```
 
-Kích hoạt môi trường:
+Vì route bị giới hạn tối đa 30 km, penalty 1000 khiến thuật toán ưu tiên ghé nhiều kho active nhất; nếu số kho ghé bằng nhau, route ngắn hơn thắng. Kho active không thể ghé trong interval hiện tại vẫn nằm trong queue để xét lại ở interval sau.
+
+Ràng buộc:
+
+```text
+route starts and ends at depot 0
+route_distance <= max_route_distance_km
+route_distance * energy_per_km <= available_battery
+sum(pickup) <= payload_capacity
+pickup[i] <= available[i]
+```
+
+Tải trọng được chia theo tỷ lệ lượng hàng giữa các kho trên route. Pin được reset tại đầu mỗi interval, tương ứng giả định thay/sạc pin ở depot.
+
+## 3. Luồng chạy
+
+```text
+WEPAStack events
+  -> aggregate theo 15 phút
+  -> trạng thái queue của từng kho
+  -> MLP probability
+  -> lọc probability >= 0.70
+  -> single-drone ACO
+  -> kiểm tra pin, quãng đường và payload
+  -> cập nhật pickup, queue và overflow
+```
+
+## 4. Chạy project
 
 ```bash
 source .venv/bin/activate
-```
-
-Huấn luyện model tương thích drone-only:
-
-```bash
 python run_training.py
-```
-
-Artifacts mới được lưu trong `model_outputs_aco/`. File `.keras` là model đã huấn luyện; notebook không thay thế trực tiếp file này.
-
-Chạy một smoke experiment ngắn:
-
-```bash
 python run_experiment.py --max-intervals 20 --aco-seeds 1
 ```
 
-Chạy thí nghiệm đầy đủ theo các policy và 10 ACO seeds trong config:
-
-```bash
-python run_experiment.py
-```
-
-Thí nghiệm đầy đủ có thể mất nhiều thời gian vì ACO được chạy lại ở từng interval.
-
-Chạy unit tests mà không cần cài pytest:
+Chạy test:
 
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache \
-python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
-## 5. Cấu trúc chính
+Model mới nằm trong `model_outputs_single_drone/`; kết quả simulation nằm trong `outputs_single_drone/`. Artifact multi-drone cũ được giữ nguyên.
+
+## 5. File chính
 
 ```text
-config/experiment.yaml       cấu hình duy nhất của thí nghiệm
-src/data_pipeline.py         đọc, làm sạch và aggregate dữ liệu
-src/queue_simulator.py       fixed policy tạo historical training states
-src/feature_builder.py       features, labels và chronological splits
-src/train_mlp_aco.py         train và lưu MLP artifacts
-src/predict_risk.py          deployment interface của MLP
-src/aco_optimizer.py         multi-drone ACO
-src/baselines.py             nearest-first và fullest-first
-src/exact_solver.py          exhaustive reference cho tối đa bốn kho
-src/rolling_simulation.py    end-to-end operational simulation
-src/solution_validator.py    independent constraint checks
-src/metrics.py               operational metrics và multi-seed summary
+config/experiment.yaml       threshold, drone và ACO config
+src/feature_builder.py       feature và congestion label
+src/train_mlp_aco.py         train MLP
+src/predict_risk.py          trả xác suất theo từng kho
+src/routing_utils.py         lọc 70%, pickup và objective
+src/aco_optimizer.py         single-drone ACO
+src/solution_validator.py    kiểm tra constraint độc lập
+src/rolling_simulation.py    pipeline end-to-end
 ```
 
-## 6. Giới hạn cần trình bày trong report
+Đặc tả triển khai chi tiết bằng tiếng Việt nằm tại `docs/implementation_guide_single_drone_mlp_aco_vi.md`.
 
-- Congestion target được tạo bằng simulation, không phải nhãn congestion thật.
-- Capacity, khoảng cách và thông số drone là giả định.
-- Một event được gọi là `standardized cargo unit`, không khẳng định drone chở nguyên pallet thật.
-- Dock 1 chiếm phần lớn sự kiện; validation/test có thể không có positive label ở Dock 2–4.
-- Probability của MLP có thể cần calibration.
-- Với chỉ bốn kho, exact reference cần được dùng để kiểm tra ACO trên các instance nhỏ.
+## 6. Giới hạn
+
+- Congestion label được tạo bằng simulation, không phải nhãn congestion quan sát trực tiếp.
+- Capacity, tọa độ, depot và thông số drone là giả định thí nghiệm.
+- Một event được xem là một standardized cargo unit.
+- Chưa mô phỏng thời gian bay, thời gian sạc, thời tiết, vùng cấm bay hay tránh va chạm.
+- Với chỉ bốn kho, exact solver được giữ để đối chiếu ACO trên instance nhỏ.

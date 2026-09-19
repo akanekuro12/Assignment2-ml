@@ -40,8 +40,8 @@ def prepare_training_data(config: dict) -> tuple[pd.DataFrame, tuple[pd.Series, 
         distance_matrix=distance_matrix,
         node_to_index=node_to_index,
         fill_threshold=float(mlp["congestion_threshold"]),
-        weight_remaining=float(objective["weight_remaining"]),
-        weight_energy=float(objective["weight_energy"]),
+        unvisited_penalty=float(objective["unvisited_penalty"]),
+        distance_weight=float(objective["distance_weight"]),
         central_node=int(config["simulation"]["central_node"]),
         battery_reset_policy=str(config["simulation"]["battery_reset_policy"]),
     )
@@ -153,9 +153,10 @@ def train(config: dict) -> dict[str, Any]:
     )
 
     validation_probability = model.predict(validation_x.to_numpy(np.float32), verbose=0).reshape(-1)
-    threshold, validation_f1 = _best_f1_threshold(
+    diagnostic_threshold, validation_f1 = _best_f1_threshold(
         validation_y.to_numpy(np.int8), validation_probability
     )
+    operational_threshold = float(config["mlp"]["risk_threshold"])
     test_probability = model.predict(test_x.to_numpy(np.float32), verbose=0).reshape(-1)
     output_directory = resolve_project_path(config["outputs"]["model_directory"], config)
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -172,12 +173,13 @@ def train(config: dict) -> dict[str, Any]:
         "prediction_horizon_intervals": int(config["mlp"]["horizon_intervals"]),
         "warehouse_capacities": {str(k): int(v) for k, v in warehouse_capacities(config).items()},
         "congestion_threshold": float(config["mlp"]["congestion_threshold"]),
-        "selected_prediction_threshold": threshold,
-        "validation_f1_at_selected_threshold": validation_f1,
+        "operational_prediction_threshold": operational_threshold,
+        "validation_optimal_threshold_diagnostic": diagnostic_threshold,
+        "validation_f1_at_diagnostic_threshold": validation_f1,
         "training_end_day": int(config["mlp"]["train_end_day"]),
         "validation_end_day": int(config["mlp"]["validation_end_day"]),
         "historical_queue_policy": str(config["simulation"]["historical_queue_policy"]),
-        "queue_semantics": "arrivals_minus_drone_pickup_no_service_rate",
+        "queue_semantics": "arrivals_minus_single_drone_filtered_route_pickup_no_service_rate",
         "random_seed": seed,
     }
     with (output_directory / "model_configuration.json").open("w", encoding="utf-8") as stream:
@@ -188,13 +190,16 @@ def train(config: dict) -> dict[str, Any]:
          "available_before_pickup", "buffer_fill_ratio", "congestion"]
     ].copy()
     predictions["predicted_probability"] = test_probability
-    predictions["predicted_congestion"] = (test_probability >= threshold).astype(np.int8)
+    predictions["predicted_congestion"] = (
+        test_probability >= operational_threshold
+    ).astype(np.int8)
     predictions.to_csv(output_directory / "test_predictions.csv", index=False)
     metrics = {
         "test_pr_auc": float(average_precision_score(test_y, test_probability)),
         "test_roc_auc": float(roc_auc_score(test_y, test_probability)),
-        "selected_threshold": threshold,
-        "validation_f1": validation_f1,
+        "operational_threshold": operational_threshold,
+        "validation_optimal_threshold_diagnostic": diagnostic_threshold,
+        "validation_f1_at_diagnostic_threshold": validation_f1,
         "train_samples": int(train_mask.sum()),
         "validation_samples": int(validation_mask.sum()),
         "test_samples": int(test_mask.sum()),

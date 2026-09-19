@@ -1,4 +1,4 @@
-"""Shared routing calculations used by heuristics and ACO."""
+"""Shared calculations for constrained single-drone routing."""
 
 from __future__ import annotations
 
@@ -12,57 +12,90 @@ from .domain import DroneState, RoutingSolution, route_distance
 EPSILON = 1e-12
 
 
-def calculate_urgency(
-    available: Mapping[int, float],
-    capacities: Mapping[int, float],
-    risk_probability: Mapping[int, float],
-    probability_weight: float,
-    fill_weight: float,
-) -> dict[int, float]:
-    return {
-        int(node): float(
-            probability_weight * float(risk_probability.get(node, 0.0))
-            + fill_weight * min(1.0, float(available[node]) / float(capacities[node]))
-        )
-        for node in available
-    }
-
-
-def active_demands(
+def select_active_warehouses(
     available: Mapping[int, float],
     capacities: Mapping[int, float],
     risk_probability: Mapping[int, float],
     risk_threshold: float,
     fill_threshold: float,
     use_risk: bool,
-) -> dict[int, float]:
-    active: dict[int, float] = {}
+) -> list[int]:
+    """Filter warehouses before routing; low-risk nodes never enter MLP-ACO."""
+    active: list[int] = []
     for node, amount in available.items():
-        fill = float(amount) / float(capacities[node])
-        risk_active = use_risk and float(risk_probability.get(node, 0.0)) >= risk_threshold
-        if float(amount) > 0 and (risk_active or fill >= fill_threshold):
-            active[int(node)] = float(amount)
-    return active
+        if float(amount) <= EPSILON:
+            continue
+        if use_risk:
+            selected = float(risk_probability.get(node, 0.0)) >= float(risk_threshold)
+        else:
+            selected = float(amount) / float(capacities[node]) >= float(fill_threshold)
+        if selected:
+            active.append(int(node))
+    return sorted(active)
 
 
-def calculate_objective(
-    remaining: Mapping[int, float],
-    demand: Mapping[int, float],
-    urgency: Mapping[int, float],
-    energy_used: Mapping[int, float],
-    drones: Sequence[DroneState],
-    weight_remaining: float,
-    weight_energy: float,
-) -> float:
-    weighted_demand = sum(float(urgency.get(node, 0.0)) * float(value) for node, value in demand.items())
-    weighted_remaining = sum(
-        float(urgency.get(node, 0.0)) * float(remaining.get(node, 0.0))
-        for node in demand
+def route_limits(drone: DroneState) -> tuple[float, float]:
+    """Return explicit distance limit and battery-implied distance limit."""
+    explicit = float(drone.max_route_distance_km)
+    battery_distance = float(drone.available_battery) / float(drone.energy_per_km)
+    return explicit, battery_distance
+
+
+def route_is_feasible(
+    route: Sequence[int],
+    drone: DroneState,
+    distance_matrix: np.ndarray,
+    node_to_index: Mapping[int, int],
+    tolerance: float = 1e-9,
+) -> bool:
+    distance = route_distance(list(route), distance_matrix, node_to_index)
+    energy = distance * float(drone.energy_per_km)
+    return bool(
+        distance <= float(drone.max_route_distance_km) + tolerance
+        and energy <= float(drone.available_battery) + tolerance
     )
-    remaining_norm = weighted_remaining / (weighted_demand + EPSILON)
-    battery_total = sum(float(drone.battery_max) for drone in drones)
-    energy_norm = sum(float(value) for value in energy_used.values()) / (battery_total + EPSILON)
-    return float(weight_remaining * remaining_norm + weight_energy * energy_norm)
+
+
+def allocate_pickups(
+    route: Sequence[int],
+    available: Mapping[int, float],
+    drone: DroneState,
+    central_node: int = 0,
+) -> tuple[dict[int, float], dict[int, float]]:
+    """Share the payload proportionally across the active warehouses on the route."""
+    remaining = {int(node): float(amount) for node, amount in available.items()}
+    visited = [
+        int(node)
+        for node in route
+        if int(node) != central_node and int(node) in remaining
+    ]
+    total_available = sum(remaining[node] for node in visited)
+    payload = min(float(drone.payload_capacity), total_available)
+    pickups: dict[int, float] = {}
+    if payload <= EPSILON or total_available <= EPSILON:
+        return pickups, remaining
+
+    for node in visited:
+        amount = payload * remaining[node] / total_available
+        if amount > EPSILON:
+            pickups[node] = amount
+            remaining[node] -= amount
+    return pickups, remaining
+
+
+def calculate_route_objective(
+    route: Sequence[int],
+    active_warehouses: Sequence[int],
+    distance_matrix: np.ndarray,
+    node_to_index: Mapping[int, int],
+    unvisited_penalty: float,
+    distance_weight: float,
+    central_node: int = 0,
+) -> float:
+    visited = {int(node) for node in route if int(node) != central_node}
+    unvisited_count = len(set(int(node) for node in active_warehouses) - visited)
+    distance = route_distance(list(route), distance_matrix, node_to_index)
+    return float(unvisited_penalty * unvisited_count + distance_weight * distance)
 
 
 def idle_solution(
@@ -74,41 +107,41 @@ def idle_solution(
         route_distance={drone.id: 0.0 for drone in drones},
         energy_used={drone.id: 0.0 for drone in drones},
         remaining_goods={int(node): float(value) for node, value in demand.items()},
-        objective_value=0.0 if not demand else 1.0,
+        objective_value=0.0 if not demand else float("inf"),
     )
 
 
-def finalize_solution(
-    routes: dict[int, list[int]],
-    pickups: dict[int, dict[int, float]],
-    remaining: Mapping[int, float],
-    demand: Mapping[int, float],
-    urgency: Mapping[int, float],
+def build_route_solution(
+    route: list[int],
+    active_goods: Mapping[int, float],
+    active_warehouses: Sequence[int],
     drones: Sequence[DroneState],
     distance_matrix: np.ndarray,
     node_to_index: Mapping[int, int],
-    weight_remaining: float,
-    weight_energy: float,
+    unvisited_penalty: float,
+    distance_weight: float,
+    central_node: int = 0,
 ) -> RoutingSolution:
-    distances = {
-        drone.id: route_distance(routes[drone.id], distance_matrix, node_to_index)
-        for drone in drones
-    }
-    energy = {drone.id: distances[drone.id] * drone.energy_per_km for drone in drones}
-    objective = calculate_objective(
-        remaining,
-        demand,
-        urgency,
-        energy,
-        drones,
-        weight_remaining,
-        weight_energy,
+    if len(drones) != 1:
+        raise ValueError("Single-drone routing requires exactly one drone.")
+    drone = drones[0]
+    pickups, remaining = allocate_pickups(route, active_goods, drone, central_node)
+    distance = route_distance(route, distance_matrix, node_to_index)
+    energy = distance * float(drone.energy_per_km)
+    objective = calculate_route_objective(
+        route,
+        active_warehouses,
+        distance_matrix,
+        node_to_index,
+        unvisited_penalty,
+        distance_weight,
+        central_node,
     )
     return RoutingSolution(
-        routes=routes,
-        pickups=pickups,
-        route_distance=distances,
-        energy_used=energy,
-        remaining_goods={int(node): float(value) for node, value in remaining.items()},
+        routes={drone.id: list(route)},
+        pickups={drone.id: pickups},
+        route_distance={drone.id: distance},
+        energy_used={drone.id: energy},
+        remaining_goods=remaining,
         objective_value=objective,
     )

@@ -51,13 +51,16 @@ def main() -> None:
 
     predictor = None
     mlp_policies = {"mlp_aco"}
-    if mlp_policies.intersection(policies):
-        model_directory = resolve_project_path(config["outputs"]["model_directory"], config)
-        if not (model_directory / "mlp_congestion_aco.keras").exists():
-            raise FileNotFoundError(
-                f"ACO-compatible model not found in {model_directory}. Run run_training.py first."
-            )
+    model_directory = resolve_project_path(config["outputs"]["model_directory"], config)
+    model_path = model_directory / "mlp_congestion_aco.keras"
+    if model_path.exists():
+        # Predict risk for every policy so risk-weighted metrics are comparable.
+        # Only mlp_aco is allowed to use risk when making routing decisions.
         predictor = RiskPredictor(model_directory)
+    elif mlp_policies.intersection(policies):
+        raise FileNotFoundError(
+            f"ACO-compatible model not found in {model_directory}. Run run_training.py first."
+        )
 
     output_root = resolve_project_path(config["outputs"]["experiment_directory"], config)
     log_directory = output_root / "logs"
@@ -79,7 +82,7 @@ def main() -> None:
                 intervals,
                 config,
                 policy,
-                predictor=predictor if policy in mlp_policies else None,
+                predictor=predictor,
                 seed=seed,
             )
             suffix = f"{policy}_seed_{seed}"

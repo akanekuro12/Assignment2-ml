@@ -14,7 +14,10 @@ from .baselines import fullest_first, nearest_first
 from .config_loader import warehouse_capacities, warehouse_coordinates
 from .domain import drones_from_config, euclidean_distance_matrix
 from .feature_builder import build_deployment_features
-from .routing_utils import active_demands, calculate_urgency, idle_solution
+from .routing_utils import (
+    idle_solution,
+    select_active_warehouses,
+)
 from .solution_validator import unreachable_round_trips, validate_solution
 
 
@@ -43,6 +46,8 @@ def run_simulation(
     capacities = warehouse_capacities(config)
     distance_matrix, node_to_index, _ = euclidean_distance_matrix(warehouse_coordinates(config))
     fleet = drones_from_config(config)
+    if len(fleet) != 1:
+        raise ValueError("Rolling simulation requires exactly one configured drone.")
     central_node = int(config["simulation"]["central_node"])
     warnings = unreachable_round_trips(
         fleet, warehouses, distance_matrix, node_to_index, central_node
@@ -51,7 +56,6 @@ def run_simulation(
         print(f"WARNING: {message}")
 
     queue = {node: 0.0 for node in warehouses}
-    previous_day: int | None = None
     interval_records: list[dict] = []
     route_records: list[dict] = []
     mlp = config["mlp"]
@@ -64,10 +68,9 @@ def run_simulation(
         if set(rows.index.astype(int)) != set(warehouses):
             raise AssertionError(f"Time bin {time_bin} does not contain every warehouse.")
         day = int(rows["day"].iloc[0])
-        if str(config["simulation"]["battery_reset_policy"]) == "daily" and day != previous_day:
-            for drone in fleet:
-                drone.reset_battery()
-        previous_day = day
+        if str(config["simulation"]["battery_reset_policy"]) != "per_interval":
+            raise ValueError("Single-drone simulation requires per_interval battery reset.")
+        fleet[0].reset_battery()
 
         arrivals = {node: float(rows.loc[node, "arrivals"]) for node in warehouses}
         available = {node: queue[node] + arrivals[node] for node in warehouses}
@@ -80,7 +83,7 @@ def run_simulation(
             risk = {node: 0.0 for node in warehouses}
 
         use_risk = policy == "mlp_aco"
-        demand = active_demands(
+        active_nodes = select_active_warehouses(
             available=available,
             capacities=capacities,
             risk_probability=risk,
@@ -88,36 +91,32 @@ def run_simulation(
             fill_threshold=float(mlp["congestion_threshold"]),
             use_risk=use_risk,
         )
-        probability_weight = float(objective["urgency_probability"]) if use_risk else 0.0
-        fill_weight = float(objective["urgency_fill"]) if use_risk else 1.0
-        urgency = calculate_urgency(
-            available, capacities, risk, probability_weight, fill_weight
-        )
+        active_goods = {node: available[node] for node in active_nodes}
 
         start = time.perf_counter()
-        if not demand:
-            solution = idle_solution(fleet, demand, central_node)
+        if not active_goods:
+            solution = idle_solution(fleet, active_goods, central_node)
         elif policy == "nearest_first":
             solution = nearest_first(
-                demand, urgency, fleet, distance_matrix, node_to_index,
-                float(objective["weight_remaining"]), float(objective["weight_energy"]), central_node,
+                active_goods, fleet, distance_matrix, node_to_index,
+                float(objective["unvisited_penalty"]), float(objective["distance_weight"]), central_node,
             )
         elif policy == "fullest_first":
             solution = fullest_first(
-                demand, urgency, fleet, distance_matrix, node_to_index, capacities,
-                float(objective["weight_remaining"]), float(objective["weight_energy"]), central_node,
+                active_goods, fleet, distance_matrix, node_to_index, capacities,
+                float(objective["unvisited_penalty"]), float(objective["distance_weight"]), central_node,
             )
         else:
             interval_seed = (base_seed * 1_000_003 + int(time_bin)) % (2**32)
             solution = optimize_aco(
-                demand, urgency, fleet, distance_matrix, node_to_index, aco,
+                active_goods, fleet, distance_matrix, node_to_index, aco,
                 seed=interval_seed, central_node=central_node, objective_config=objective,
             )
         runtime = time.perf_counter() - start
         violations = validate_solution(
             solution,
             fleet,
-            demand,
+            active_goods,
             distance_matrix,
             node_to_index,
             central_node,
@@ -128,6 +127,12 @@ def run_simulation(
 
         pickup_total = {node: 0.0 for node in warehouses}
         serving_drones: dict[int, list[int]] = {node: [] for node in warehouses}
+        visited_nodes = {
+            int(node)
+            for route in solution.routes.values()
+            for node in route
+            if int(node) != central_node
+        }
         for drone in fleet:
             for node, amount in solution.pickups.get(drone.id, {}).items():
                 pickup_total[node] += float(amount)
@@ -148,6 +153,9 @@ def run_simulation(
                     "route_distance": solution.route_distance.get(drone.id, 0.0),
                     "energy_used": solution.energy_used.get(drone.id, 0.0),
                     "battery_remaining": drone.available_battery,
+                    "active_warehouse_count": len(active_nodes),
+                    "visited_warehouse_count": len(visited_nodes),
+                    "unvisited_warehouse_count": len(set(active_nodes) - visited_nodes),
                     "objective_value": solution.objective_value,
                 }
             )
@@ -172,7 +180,8 @@ def run_simulation(
                     "available_before_pickup": available[node],
                     "fill_ratio": available[node] / capacities[node],
                     "risk_probability": risk[node],
-                    "active": node in demand,
+                    "active": node in active_nodes,
+                    "visited": node in visited_nodes,
                     "amount_picked": pickup_total[node],
                     "queue_after": queue_after,
                     "overflow": overflow,

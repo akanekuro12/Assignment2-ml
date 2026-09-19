@@ -16,12 +16,10 @@ class ACODeterminismTests(unittest.TestCase):
         )
         index = {0: 0, 1: 1, 2: 2}
         demand = {1: 8.0, 2: 8.0}
-        urgency = {1: 0.8, 2: 0.6}
-
         def run():
-            drones = [DroneState(1, 10, 20, 1), DroneState(2, 10, 20, 1)]
+            drones = [DroneState(1, 10, 20, 1)]
             return optimize_aco(
-                demand, urgency, drones, distance, index, ACO_CONFIG, seed=42
+                demand, drones, distance, index, ACO_CONFIG, seed=42
             )
 
         first, second = run(), run()

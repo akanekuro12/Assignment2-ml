@@ -32,6 +32,11 @@ def validate_solution(
             errors.append(f"Drone {drone_id}: route must start and end at {central_node}.")
         if any(node not in valid_nodes for node in route):
             errors.append(f"Drone {drone_id}: route contains an unknown node.")
+        routed_warehouses = [int(node) for node in route if int(node) != central_node]
+        if len(routed_warehouses) != len(set(routed_warehouses)):
+            errors.append(f"Drone {drone_id}: a warehouse is visited more than once.")
+        if any(node not in demand for node in routed_warehouses):
+            errors.append(f"Drone {drone_id}: route contains a filtered-out warehouse.")
 
         total_pickup = float(sum(pickups.values()))
         if total_pickup > drone.payload_capacity + tolerance:
@@ -46,6 +51,8 @@ def validate_solution(
         if route and all(node in valid_nodes for node in route):
             computed_distance = route_distance(route, distance_matrix, node_to_index)
             computed_energy = computed_distance * drone.energy_per_km
+            if computed_distance > float(drone.max_route_distance_km) + tolerance:
+                errors.append(f"Drone {drone_id}: maximum route distance exceeded.")
             if computed_energy > float(drone.available_battery) + tolerance:
                 errors.append(f"Drone {drone_id}: available battery exceeded.")
             if abs(computed_energy - float(solution.energy_used.get(drone_id, 0.0))) > tolerance:
@@ -74,11 +81,14 @@ def unreachable_round_trips(
         feasible_drone_exists = False
         distance = 2.0 * distance_matrix[node_to_index[central_node], node_to_index[warehouse]]
         for drone in drones:
-            if distance * drone.energy_per_km <= drone.battery_max + 1e-8:
+            if (
+                distance <= float(drone.max_route_distance_km) + 1e-8
+                and distance * drone.energy_per_km <= drone.battery_max + 1e-8
+            ):
                 feasible_drone_exists = True
                 break
         if not feasible_drone_exists:
             warnings.append(
-                f"Warehouse {warehouse} cannot be served by any drone with a return reserve."
+                f"Warehouse {warehouse} violates the drone round-trip battery or distance limit."
             )
     return warnings

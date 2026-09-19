@@ -1,0 +1,10 @@
+{
+  "test_pr_auc": 0.9937619131618993,
+  "test_roc_auc": 0.998350324423881,
+  "operational_threshold": 0.7,
+  "validation_optimal_threshold_diagnostic": 0.9313410520553589,
+  "validation_f1_at_diagnostic_threshold": 0.9713679745493107,
+  "train_samples": 22628,
+  "validation_samples": 5360,
+  "test_samples": 5532
+}

@@ -60,8 +60,8 @@ def validate_config(config: Dict[str, Any]) -> None:
         raise ValueError("Coordinates must include the central node and every warehouse.")
 
     fleet = config["drones"]["fleet"]
-    if not fleet:
-        raise ValueError("At least one drone is required.")
+    if len(fleet) != 1:
+        raise ValueError("The single-drone experiment requires exactly one drone.")
     if len({int(item["id"]) for item in fleet}) != len(fleet):
         raise ValueError("Drone ids must be unique.")
     for item in fleet:
@@ -69,6 +69,8 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ValueError("Drone payload and battery must be positive.")
         if float(item["energy_per_km"]) <= 0:
             raise ValueError("Drone energy_per_km must be positive.")
+        if float(item["max_route_distance_km"]) <= 0:
+            raise ValueError("Drone max_route_distance_km must be positive.")
 
     if int(config["mlp"]["horizon_intervals"]) <= 0:
         raise ValueError("MLP prediction horizon must be positive.")
@@ -76,6 +78,9 @@ def validate_config(config: Dict[str, Any]) -> None:
         value = float(config["mlp"][name])
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"mlp.{name} must be in [0, 1].")
+    if str(config["simulation"]["battery_reset_policy"]) != "per_interval":
+        raise ValueError("The single-drone experiment requires per_interval battery reset.")
+
 
 def resolve_project_path(value: str | Path, config: Dict[str, Any] | None = None) -> Path:
     path = Path(value).expanduser()

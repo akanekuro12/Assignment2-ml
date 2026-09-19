@@ -9,7 +9,7 @@ import pandas as pd
 
 from .baselines import fullest_first
 from .domain import DroneState
-from .routing_utils import active_demands, calculate_urgency
+from .routing_utils import select_active_warehouses
 
 
 def simulate_historical_queue(
@@ -19,49 +19,46 @@ def simulate_historical_queue(
     distance_matrix: np.ndarray,
     node_to_index: Mapping[int, int],
     fill_threshold: float,
-    weight_remaining: float,
-    weight_energy: float,
+    unvisited_penalty: float,
+    distance_weight: float,
     central_node: int = 0,
-    battery_reset_policy: str = "daily",
+    battery_reset_policy: str = "per_interval",
 ) -> pd.DataFrame:
     """Generate states with a fixed fullest-first policy and no future information."""
     warehouses = sorted(int(node) for node in capacities)
     queue = {node: 0.0 for node in warehouses}
     fleet = [drone.copy() for drone in drones]
     records: list[dict] = []
-    previous_day: int | None = None
+    if len(fleet) != 1:
+        raise ValueError("Historical queue simulation requires exactly one drone.")
 
     for time_bin, rows in intervals.groupby("time_bin", sort=True):
         rows = rows.set_index("dock")
         day = int(rows["day"].iloc[0])
-        if battery_reset_policy == "daily" and day != previous_day:
-            for drone in fleet:
-                drone.reset_battery()
-        previous_day = day
+        if battery_reset_policy != "per_interval":
+            raise ValueError("Single-drone simulation requires per_interval battery reset.")
+        fleet[0].reset_battery()
 
         arrivals = {node: float(rows.loc[node, "arrivals"]) for node in warehouses}
         available = {node: queue[node] + arrivals[node] for node in warehouses}
         zero_risk = {node: 0.0 for node in warehouses}
-        demand = active_demands(
-            available,
-            capacities,
-            zero_risk,
+        active_nodes = select_active_warehouses(
+            available=available,
+            capacities=capacities,
+            risk_probability=zero_risk,
             risk_threshold=1.1,
             fill_threshold=fill_threshold,
             use_risk=False,
         )
-        urgency = calculate_urgency(
-            available, capacities, zero_risk, probability_weight=0.0, fill_weight=1.0
-        )
+        active_goods = {node: available[node] for node in active_nodes}
         solution = fullest_first(
-            demand=demand,
-            urgency=urgency,
+            active_goods=active_goods,
             drones=fleet,
             distance_matrix=distance_matrix,
             node_to_index=node_to_index,
             capacities=capacities,
-            weight_remaining=weight_remaining,
-            weight_energy=weight_energy,
+            unvisited_penalty=unvisited_penalty,
+            distance_weight=distance_weight,
             central_node=central_node,
         )
 

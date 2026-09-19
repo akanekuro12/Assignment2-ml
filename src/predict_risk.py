@@ -25,6 +25,8 @@ class RiskPredictor:
 
     @property
     def classification_threshold(self) -> float:
+        if "operational_prediction_threshold" in self.config:
+            return float(self.config["operational_prediction_threshold"])
         return float(self.config["selected_prediction_threshold"])
 
     def predict_frame(self, features: pd.DataFrame) -> np.ndarray:

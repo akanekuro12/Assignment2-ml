@@ -8,7 +8,7 @@ data:
 mlp:
   horizon_intervals: 4
   congestion_threshold: 0.80
-  risk_threshold: 0.50
+  risk_threshold: 0.70
   train_end_day: 60
   validation_end_day: 74
   hidden_units: [32, 16]
@@ -31,20 +31,12 @@ warehouses:
     4: [-4.0, -6.0]
 
 drones:
-  battery_reset_policy: daily
   fleet:
     - id: 1
       payload_capacity: 30
       battery_max: 30.0
       energy_per_km: 1.0
-    - id: 2
-      payload_capacity: 30
-      battery_max: 30.0
-      energy_per_km: 1.0
-    - id: 3
-      payload_capacity: 20
-      battery_max: 22.0
-      energy_per_km: 1.1
+      max_route_distance_km: 30.0
 
 aco:
   ants: 30
@@ -59,15 +51,13 @@ aco:
   stall_iterations: 20
 
 objective:
-  weight_remaining: 0.70
-  weight_energy: 0.30
-  urgency_probability: 0.60
-  urgency_fill: 0.40
+  unvisited_penalty: 1000.0
+  distance_weight: 1.0
 
 simulation:
   central_node: 0
   historical_queue_policy: fullest_first
-  battery_reset_policy: daily
+  battery_reset_policy: per_interval
   test_policies:
     - nearest_first
     - fullest_first
@@ -76,5 +66,5 @@ simulation:
   aco_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 outputs:
-  model_directory: model_outputs_aco
-  experiment_directory: outputs
+  model_directory: model_outputs_single_drone
+  experiment_directory: outputs_single_drone
