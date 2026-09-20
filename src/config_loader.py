@@ -78,6 +78,15 @@ def validate_config(config: Dict[str, Any]) -> None:
         value = float(config["mlp"][name])
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"mlp.{name} must be in [0, 1].")
+    evaluation_seeds = [int(value) for value in config["mlp"].get("evaluation_seeds", [])]
+    if len(evaluation_seeds) != len(set(evaluation_seeds)):
+        raise ValueError("mlp.evaluation_seeds must not contain duplicates.")
+    for name in ("false_negative_cost", "false_positive_cost"):
+        if float(config["mlp"].get(name, 0.0)) < 0:
+            raise ValueError(f"mlp.{name} must be non-negative.")
+    for threshold in config["simulation"].get("threshold_sweep", []):
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("simulation.threshold_sweep values must be in [0, 1].")
     if str(config["simulation"]["battery_reset_policy"]) != "per_interval":
         raise ValueError("The single-drone experiment requires per_interval battery reset.")
 

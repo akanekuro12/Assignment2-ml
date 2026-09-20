@@ -1,0 +1,13 @@
+split,dock,negative_samples,positive_samples
+test,1,284,1099
+test,2,1383,0
+test,3,1383,0
+test,4,1383,0
+train,1,865,4792
+train,2,4995,662
+train,3,5181,476
+train,4,5296,361
+validation,1,375,965
+validation,2,1340,0
+validation,3,1340,0
+validation,4,1340,0

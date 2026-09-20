@@ -426,7 +426,7 @@ Hidden units & 32, 16 & Trainable parameters & 801 \\
 Learning rate & 0.001 & Batch size & 256 \\
 Maximum epochs & 100 & Early-stopping patience & 8 \\
 Training boundary & Day 60 & Validation boundary & Day 74 \\
-Operational threshold & Fixed at 0.70 & Validation diagnostic & Saved when training is run \\
+Operational threshold & Fixed at 0.70 & Validation F1 diagnostic & 0.9313 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -435,13 +435,105 @@ Operational threshold & Fixed at 0.70 & Validation diagnostic & Saved when train
 
 Accuracy alone is insufficient when class balance and temporal coverage differ across docks. Precision measures how many warnings are correct. Recall measures how many threshold cases are detected. F1 balances precision and recall. Balanced accuracy averages sensitivity and specificity. Average precision summarises the precision--recall curve \cite{saito2015}. The confusion matrix and per-dock support are essential because strong global performance can still reflect a dock-identity shortcut rather than general temporal prediction.
 
-For routing, the metrics are overflow, collected goods, energy, distance, number of sorties, active-warehouse visit rate, runtime, and independently recomputed constraint violations. The primary comparison is MLP--ACO against nearest-first, fullest-first, and ACO-current. A complete routing result requires the entire held-out period and repeated ACO seeds. No operational result is currently retained in the repository.
+For routing, the metrics are overflow, collected goods, energy, distance, number of sorties, active-warehouse visit rate, runtime, and independently recomputed constraint violations. The primary comparison is MLP--ACO against nearest-first, fullest-first, and ACO-current. The final run covers the entire held-out period and all ten configured seeds for each stochastic policy.
 
-\section{Results Status}
+\section{Results}
 
-No trained model, prediction table, routing log, metric table, or generated figure is currently retained. Previous exploratory artifacts were deleted after review because the observed data did not exercise simultaneous multi-warehouse routing and therefore did not provide a meaningful evaluation of ACO route ordering. The report must not reproduce numerical claims from those deleted artifacts.
+\subsection{Prediction performance}
 
-A new result section may be completed only after a controlled rerun records the exact configuration and demonstrates both parts of the task. Prediction evidence must include class support overall and per warehouse, PR--AUC, ROC--AUC, precision, recall, F1, a confusion matrix at the fixed 0.70 operational threshold, and declared simple baselines. Routing evidence must cover the complete held-out stream with all configured seeds and must report how often zero, one, or multiple warehouses are active simultaneously. If no interval contains at least two feasible active warehouses, the experiment may evaluate dispatch timing but cannot demonstrate ACO route-order optimisation.
+The chronological split produced 22,628 training samples, 5,360 validation samples, and 5,532 test samples. Their positive rates were 27.80\%, 18.00\%, and 19.87\%, respectively. Training stopped after 75 epochs. At the fixed operational threshold of 0.70, the held-out test confusion counts were $TN=4418$, $FP=15$, $FN=50$, and $TP=1049$. Table~\ref{tab:prediction-results} reports the principal metrics.
+
+\begin{table}[H]
+\centering
+\caption{Held-out prediction results at threshold 0.70}
+\label{tab:prediction-results}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Bal. accuracy & Precision & Recall & F1 & PR--AUC & ROC--AUC \\
+\midrule
+Always negative & 0.5000 & 0.0000 & 0.0000 & 0.0000 & -- & -- \\
+Current fill $\geq 0.80$ & 0.8904 & 1.0000 & 0.7807 & 0.8769 & -- & -- \\
+MLP score $\geq 0.70$ & 0.9756 & 0.9859 & 0.9545 & 0.9699 & 0.9938 & 0.9984 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across five training seeds, mean test PR--AUC was $0.99381\pm0.00023$ and mean F1 was $0.96976\pm0.00068$, indicating low optimisation variance for the fixed split. Removing warehouse one-hot features slightly increased thresholded F1 from 0.9699 to 0.9704 but reduced PR--AUC from 0.9938 to 0.9826. Logistic regression achieved F1 0.9668 and PR--AUC 0.9938. Thus, the MLP gives a modest thresholded improvement over the linear model, while the warehouse identity input does not explain its performance gain.
+
+The result is not equally supported across warehouses. All 1,099 positive test labels occur at Warehouse~1. Warehouses~2--4 each contribute 1,383 negative samples and no positive samples, so their recall, F1, and positive-class ranking performance cannot be estimated. Figure~\ref{fig:prediction-evidence} makes this limitation explicit.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{precision_recall_curve.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{per_warehouse_metrics.png}
+\end{minipage}
+\caption{Held-out precision--recall evidence (left) and warehouse-specific support limitation (right).}
+\label{fig:prediction-evidence}
+\end{figure}
+
+The Brier score was 0.0122, but the reliability diagram shows that several sparsely supported middle-score bins lie below the ideal diagonal. The sigmoid output is therefore retained as a risk score rather than asserted to be a fully calibrated probability. The validation-optimal F1 threshold was 0.9313, compared with the fixed operational threshold of 0.70. The fixed threshold has a similar validation F1 but makes more proactive routing decisions.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{reliability_diagram.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{validation_threshold_sensitivity.png}
+\end{minipage}
+\caption{Reliability evidence (left) and validation threshold trade-off under an illustrative $5{:}1$ false-negative cost (right).}
+\label{fig:calibration-threshold}
+\end{figure}
+
+\subsection{Operational performance}
+
+The complete held-out stream contains 1,387 time bins and 5,548 warehouse--interval rows. The stochastic policies were evaluated with all ten configured seeds. At threshold 0.70, MLP--ACO reduced mean overflow from 6,219 to 5,511 units relative to ACO-current, an 11.38\% reduction, and collected 738 additional units. This required 270 additional distance and energy units, increasing both from 8,570 to 8,840. All independently checked payload, battery, route-distance, and route-validity constraints were satisfied.
+
+\begin{table}[H]
+\centering
+\caption{Full-period operational comparison}
+\label{tab:operational-results}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Policy & Overflow & Collected & Distance & Energy & Sorties \\
+\midrule
+Nearest-first & 6219 & 25710 & 8570 & 8570 & 857 \\
+Fullest-first & 6219 & 25710 & 8570 & 8570 & 857 \\
+ACO-current & 6219 & 25710 & 8570 & 8570 & 857 \\
+MLP--ACO & 5511 & 26448 & 8840 & 8840 & 884 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No policy encountered more than one active warehouse in any interval. Consequently, every ACO seed produced the same operational totals and the experiment evaluates MLP-triggered dispatch timing, not stochastic route ordering. This is conclusive negative evidence for the claimed multi-stop aspect under the current data and configuration.
+
+The operational threshold sweep quantifies the loss--objective mismatch. Reducing the threshold from 0.70 to 0.30 reduced overflow from 5,511 to 4,445 units, but increased distance and energy from 8,840 to 10,620. Hence the threshold that best protects against overflow is not the threshold that minimises resource use; a business cost or Pareto criterion is required to select between them.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{operational_comparison.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{operational_threshold_sensitivity.png}
+\end{minipage}
+\caption{Full-period policy comparison (left) and downstream threshold sensitivity (right).}
+\label{fig:operational-evidence}
+\end{figure}
 
 \subsection{Implementation verification}
 
@@ -451,7 +543,7 @@ A fresh run of the current test suite completed 21 tests with no failures. The t
 
 \subsection{Answer to the research question}
 
-The research question is currently unanswered because all exploratory result artifacts have been removed. The implementation defines a reproducible experiment, but code execution alone is not evidence that the MLP improves prediction or that MLP filtering improves routing. Any future answer must be based on regenerated artifacts with documented support, baselines, full-period routing, repeated seeds, and constraint checks.
+For the supported Warehouse~1 portion of the held-out data, the MLP improves congestion-warning F1 from 0.8769 for the current-fill baseline to 0.9699 and MLP filtering reduces simulated overflow by 11.38\% relative to ACO-current at the configured threshold. These findings support proactive dispatch filtering. They do not demonstrate generalisation to positive cases at Warehouses~2--4, and they do not demonstrate ACO route-order optimisation because no interval contains multiple active warehouses.
 
 \subsection{Training loss versus the practical objective}
 
@@ -461,7 +553,7 @@ The ACO objective also differs from the operational objective. Equation~\eqref{e
 
 \subsection{Implications}
 
-The fixed operational threshold is 0.70. A validation-F1 threshold may be saved diagnostically when training is run, but it does not control routing. Because 0.70 was specified rather than selected by an operational validation study, a threshold-sensitivity experiment is necessary. The sigmoid value should be called a risk score until calibration has been demonstrated.
+The fixed operational threshold is 0.70, whereas validation F1 selected 0.9313. The operational sweep shows that lower thresholds trade additional distance and energy for lower overflow. Because the choice depends on the relative cost of these outcomes, 0.70 should be described as a configured policy point rather than an empirically optimal threshold. The sigmoid value is called a risk score because the reliability evidence does not establish calibration across the full range.
 
 The single-drone design makes the algorithm easier to explain and validate. It also reduces the combinatorial difficulty: with at most four active warehouses there are only 24 complete visit orders before considering subsets. ACO remains a valid stochastic routing study, but an exact enumerator is computationally practical for this experiment and should be used more extensively as a reference.
 
@@ -473,13 +565,13 @@ The single-drone design makes the algorithm easier to explain and validate. It a
   \item \textbf{Warehouse coverage shift.} Warehouses~2--4 end early in the supplied event stream and have no positive validation or test labels.
   \item \textbf{Ambiguous zero intervals.} Missing or inactive coverage is encoded in the same way as an active dock with zero arrivals.
   \item \textbf{Dominant Dock 1.} Dock~1 contains 93.26\% of inbound events, so the fitted shared model may be strongly influenced by its operating pattern.
-  \item \textbf{Potential warehouse shortcut.} One-hot identity features may exploit the unequal support pattern; their effect has not yet been measured by ablation.
-  \item \textbf{Uncalibrated score.} Weighted BCE can produce useful ranking without a calibrated probability, and no reliability analysis is currently reported.
+  \item \textbf{Warehouse identity ablation.} Removing one-hot identity slightly improved F1 but reduced PR--AUC, so identity is not the sole explanation for performance; interpretation remains limited by missing positive support outside Warehouse~1.
+  \item \textbf{Imperfect calibration.} The Brier score is low because most scores are near well-separated extremes, while sparsely supported middle-score bins deviate from the ideal reliability line.
   \item \textbf{Limited feature set.} The baseline excludes hour-of-day, shift, robot state, downtime, service completions, and SKU mixture.
   \item \textbf{Simplified single-drone physics.} Battery is restored every 15 minutes and the model omits flight duration, charging time, weather, no-fly zones, and collision avoidance.
   \item \textbf{Hard filtering.} A score change from 0.699 to 0.700 can change routing eligibility even though the underlying states are almost identical.
   \item \textbf{Objective mismatch.} ACO minimises unvisited active warehouses and distance, not expected overflow or collected quantity.
-  \item \textbf{No retained empirical evaluation.} Model and routing artifacts are currently absent, so the report makes no performance claim until a controlled rerun is accepted.
+  \item \textbf{No multi-stop routing evidence.} The complete run contains no interval with more than one active warehouse, so equal ACO results across seeds cannot establish route-order quality.
   \item \textbf{Small routing instance.} With four warehouses, exact enumeration may be more appropriate than ACO unless the study is explicitly framed as a prototype for larger instances.
 \end{enumerate}
 
@@ -487,32 +579,32 @@ The single-drone design makes the algorithm easier to explain and validate. It a
 
 One important improvement is to obtain data that distinguish an active dock with no arrivals from an inactive or unobserved dock. A \texttt{dock\_active} field, operating calendar, and documented reason for the early termination of Warehouses~2--4 would support a more defensible temporal grid. Real queue length, service completions, incident logs, and confirmed capacities could then be used to assess Eq.~\eqref{eq:target} against an observed target.
 
-Model evaluation should preserve chronological splits and report support for every metric. The first ablation should remove warehouse one-hot inputs; a second should evaluate only cases whose current fill is below 0.80, thereby isolating genuine congestion onset. Probability calibration should be assessed with a reliability diagram and Brier score. Any changes made after inspecting the current test results require a new untouched test period.
+Model evaluation should continue to preserve chronological splits and report support for every metric. The completed identity ablation should be extended by evaluating only cases whose current fill is below 0.80, thereby isolating genuine congestion onset. Calibration methods should be fitted on validation data and assessed on a new untouched test period; the present test period must not be reused for further model selection.
 
-The 0.70 routing threshold should be varied on validation simulations, for example alongside 0.50 and 0.90, and compared using overflow--energy trade-offs. Candidate policies should also test a minimum pickup load. A decision-aware extension could replace the count-based penalty with estimated overflow cost, although this would make the algorithm more complex.
+The completed threshold sweep should next be repeated on a validation simulation before selecting a deployment threshold. Candidate policies should also test a minimum pickup load. A decision-aware extension could replace the count-based penalty with estimated overflow cost, although this would make the algorithm more complex.
 
-The final routing experiment should run nearest-first, fullest-first, ACO-current, and MLP--ACO on identical copies of the complete held-out stream. ACO should use all ten configured seeds. Results should include mean, standard deviation, and confidence intervals for overflow, goods collected, energy, distance, active visits, sorties, and runtime. Because there are at most four warehouses, every active set can also be compared with the exact reference solver to quantify any ACO optimality gap.
+Future routing evaluation requires data or a scenario with simultaneous demand at multiple warehouses. Because there are at most four warehouses, every nontrivial active set can also be compared with the exact reference solver to quantify any ACO optimality gap. Until such cases exist, additional ACO seeds do not add route-order evidence.
 
 \section{Conclusion}
 
 The updated system has a clear two-stage interface: the MLP produces four risk scores, a fixed 0.70 filter selects non-empty warehouses, and single-drone ACO builds a distance-based route over only those warehouses. The ACO objective penalises unvisited active warehouses before distance, and payload is divided proportionally after route construction. This description matches the current configuration and implementation; earlier multi-drone, urgency-weighted, and daily-battery formulations are not part of the reported method.
 
-No empirical conclusion is currently reported. A future result must first establish adequate positive support for prediction and enough simultaneous active warehouses to exercise route ordering. If those conditions are not met, the project should explicitly limit its claim to implementation and dispatch filtering rather than claim that ACO solves a meaningful multi-stop optimisation problem.
+The controlled rerun provides evidence that, for Warehouse~1 and the simulated target, the MLP is an accurate and stable risk-ranking model and that earlier risk-triggered dispatch can reduce overflow at an energy and distance cost. The 0.70 MLP--ACO policy reduced overflow by 11.38\% relative to current-state routing while satisfying every checked constraint. However, positive prediction support is absent for Warehouses~2--4 and no interval exercises multi-stop routing. The defensible conclusion is therefore limited to prediction and dispatch filtering; the current experiment does not demonstrate that ACO solves a meaningful route-order problem.
 
 \section*{Reproducibility Checklist}
 \addcontentsline{toc}{section}{Reproducibility Checklist}
 
 \begin{itemize}
   \item Dataset file: \code{wepastacks_inbound_clean.csv}.
-  \item Training recreates \code{model_outputs_single_drone}; no generated model artifact is currently retained.
-  \item Accepted prediction evidence must include baseline, support, threshold, confusion-matrix, and per-warehouse tables.
+  \item Training recreated \code{model_outputs_single_drone}, including the saved model, predictions, metrics, calibration, threshold, seed-stability, ablation, and error-analysis artifacts.
+  \item Prediction evidence includes baseline, support, threshold, confusion-matrix, and per-warehouse tables and figures.
   \item Command-line training entry point: \code{run_training.py}.
   \item Integrated experiment configuration: \code{config/experiment.yaml}.
   \item Routing entry point: \code{run_experiment.py}.
   \item Test command: \code{PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache .venv/bin/python -m unittest discover -s tests -v}.
   \item Current verification: 21 tests passed in the available virtual environment; rerun immediately before submission.
-  \item Routing recreates \code{outputs_single_drone}; no generated routing artifact is currently retained.
-  \item Required final evidence: complete held-out routing runs, ten seeds for each stochastic ACO policy, and the distribution of simultaneous active-warehouse counts.
+  \item Routing recreated \code{outputs_single_drone} for the complete held-out period and all configured seeds.
+  \item The run records ten seeds for each stochastic ACO policy and reports that the maximum simultaneous active-warehouse count is one.
 \end{itemize}
 
 \appendix
@@ -561,7 +653,7 @@ For true positives $TP$, false positives $FP$, true negatives $TN$, and false ne
 {\mathrm{Precision}+\mathrm{Recall}},\\
 \mathrm{Balanced\ Accuracy} &= \frac{\mathrm{Recall}+\mathrm{Specificity}}{2}.
 \end{align}
-The Brier score is the mean squared difference between a predicted score and the binary target. It is not reported in the current artifact set. A Brier score and reliability plot are required before the sigmoid output can be interpreted as a calibrated probability.
+The Brier score is the mean squared difference between a predicted score and the binary target. The held-out value is 0.0122. The accompanying reliability plot shows weak support and deviations in middle-score bins, so this value alone is not treated as proof of full calibration.
 
 \begin{thebibliography}{9}
 

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import random
+import warnings
 from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
@@ -22,7 +24,7 @@ from .feature_builder import (
     feature_names,
 )
 from .queue_simulator import simulate_historical_queue
-from .result_reporting import save_prediction_reports
+from .result_reporting import _binary_metrics, save_prediction_reports
 
 
 def prepare_training_data(config: dict) -> tuple[pd.DataFrame, tuple[pd.Series, pd.Series, pd.Series]]:
@@ -78,6 +80,64 @@ def _best_f1_threshold(labels: np.ndarray, probabilities: np.ndarray) -> tuple[f
     return float(thresholds[index]), float(f1[index])
 
 
+def _fit_mlp(
+    tf: Any,
+    train_x: np.ndarray,
+    train_y: np.ndarray,
+    validation_x: np.ndarray,
+    validation_y: np.ndarray,
+    config: dict,
+    class_weights: dict[int, float],
+    seed: int,
+    verbose: int = 0,
+) -> tuple[Any, Any]:
+    """Build and fit one deterministic MLP replicate."""
+    tf.keras.backend.clear_session()
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.keras.utils.set_random_seed(seed)
+    hidden_units = [int(value) for value in config["mlp"]["hidden_units"]]
+    model = tf.keras.Sequential(name=f"mlp_drone_congestion_seed_{seed}")
+    model.add(tf.keras.layers.Input(shape=(train_x.shape[1],), name="features"))
+    for index, units in enumerate(hidden_units, start=1):
+        model.add(tf.keras.layers.Dense(units, activation="relu", name=f"dense_{index}"))
+    model.add(tf.keras.layers.Dense(1, activation="sigmoid", name="risk_probability"))
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=float(config["mlp"]["learning_rate"])),
+        loss="binary_crossentropy",
+        metrics=[
+            tf.keras.metrics.Precision(name="precision"),
+            tf.keras.metrics.Recall(name="recall"),
+            tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
+        ],
+    )
+    callback = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=int(config["mlp"]["early_stopping_patience"]),
+        restore_best_weights=True,
+    )
+    history = model.fit(
+        train_x,
+        train_y,
+        validation_data=(validation_x, validation_y),
+        epochs=int(config["mlp"]["max_epochs"]),
+        batch_size=int(config["mlp"]["batch_size"]),
+        class_weight=class_weights,
+        callbacks=[callback],
+        verbose=verbose,
+    )
+    return model, history
+
+
+def _evaluation_row(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    threshold: float,
+) -> dict[str, float | int]:
+    predictions = (np.asarray(probabilities) >= threshold).astype(np.int8)
+    return _binary_metrics(np.asarray(labels, dtype=np.int8), predictions, probabilities)
+
+
 def train(config: dict) -> dict[str, Any]:
     import tensorflow as tf
 
@@ -121,43 +181,31 @@ def train(config: dict) -> dict[str, Any]:
     class_weights = {
         int(label): len(train_y) / (len(counts) * int(count)) for label, count in counts.items()
     }
-    hidden_units = [int(value) for value in config["mlp"]["hidden_units"]]
-    model = tf.keras.Sequential(name="mlp_drone_congestion")
-    model.add(tf.keras.layers.Input(shape=(len(features),), name="features"))
-    for index, units in enumerate(hidden_units, start=1):
-        model.add(tf.keras.layers.Dense(units, activation="relu", name=f"dense_{index}"))
-    model.add(tf.keras.layers.Dense(1, activation="sigmoid", name="risk_probability"))
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=float(config["mlp"]["learning_rate"])),
-        loss="binary_crossentropy",
-        metrics=[
-            tf.keras.metrics.Precision(name="precision"),
-            tf.keras.metrics.Recall(name="recall"),
-            tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
-        ],
-    )
-    callback = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss",
-        patience=int(config["mlp"]["early_stopping_patience"]),
-        restore_best_weights=True,
-    )
-    history = model.fit(
-        train_x.to_numpy(np.float32),
-        train_y.to_numpy(np.float32),
-        validation_data=(validation_x.to_numpy(np.float32), validation_y.to_numpy(np.float32)),
-        epochs=int(config["mlp"]["max_epochs"]),
-        batch_size=int(config["mlp"]["batch_size"]),
-        class_weight=class_weights,
-        callbacks=[callback],
+    train_array = train_x.to_numpy(np.float32)
+    validation_array = validation_x.to_numpy(np.float32)
+    test_array = test_x.to_numpy(np.float32)
+    train_labels = train_y.to_numpy(np.int8)
+    validation_labels = validation_y.to_numpy(np.int8)
+    test_labels = test_y.to_numpy(np.int8)
+    model, history = _fit_mlp(
+        tf,
+        train_array,
+        train_labels.astype(np.float32),
+        validation_array,
+        validation_labels.astype(np.float32),
+        config,
+        class_weights,
+        seed,
         verbose=2,
     )
 
-    validation_probability = model.predict(validation_x.to_numpy(np.float32), verbose=0).reshape(-1)
+    train_probability = model.predict(train_array, verbose=0).reshape(-1)
+    validation_probability = model.predict(validation_array, verbose=0).reshape(-1)
     diagnostic_threshold, validation_f1 = _best_f1_threshold(
-        validation_y.to_numpy(np.int8), validation_probability
+        validation_labels, validation_probability
     )
     operational_threshold = float(config["mlp"]["risk_threshold"])
-    test_probability = model.predict(test_x.to_numpy(np.float32), verbose=0).reshape(-1)
+    test_probability = model.predict(test_array, verbose=0).reshape(-1)
     output_directory = resolve_project_path(config["outputs"]["model_directory"], config)
     output_directory.mkdir(parents=True, exist_ok=True)
     model.save(output_directory / "mlp_congestion_aco.keras")
@@ -193,12 +241,91 @@ def train(config: dict) -> dict[str, Any]:
         test_probability >= operational_threshold
     ).astype(np.int8)
     predictions.to_csv(output_directory / "test_predictions.csv", index=False)
+
+    split_frames = []
+    for split_name, labels, probabilities, split_rows in (
+        ("train", train_labels, train_probability, splits["train"][2]),
+        ("validation", validation_labels, validation_probability, splits["validation"][2]),
+        ("test", test_labels, test_probability, splits["test"][2]),
+    ):
+        split_frames.append(pd.DataFrame({
+            "split": split_name,
+            "dock": split_rows["dock"].to_numpy(),
+            "actual": labels,
+            "probability": probabilities,
+            "prediction_at_operational_threshold": (
+                probabilities >= operational_threshold
+            ).astype(np.int8),
+        }))
+    split_predictions = pd.concat(split_frames, ignore_index=True)
+    split_predictions.to_csv(output_directory / "all_split_predictions.csv", index=False)
+
+    evaluation_seeds = [int(value) for value in config["mlp"].get("evaluation_seeds", [seed])]
+    evaluation_seeds = list(dict.fromkeys([seed, *evaluation_seeds]))
+    seed_rows = [{"seed": seed, **_evaluation_row(test_labels, test_probability, operational_threshold)}]
+    for evaluation_seed in evaluation_seeds:
+        if evaluation_seed == seed:
+            continue
+        replicate, _ = _fit_mlp(
+            tf,
+            train_array,
+            train_labels.astype(np.float32),
+            validation_array,
+            validation_labels.astype(np.float32),
+            config,
+            class_weights,
+            evaluation_seed,
+            verbose=0,
+        )
+        replicate_probability = replicate.predict(test_array, verbose=0).reshape(-1)
+        seed_rows.append({
+            "seed": evaluation_seed,
+            **_evaluation_row(test_labels, replicate_probability, operational_threshold),
+        })
+    seed_metrics = pd.DataFrame(seed_rows)
+
+    logistic = LogisticRegression(
+        class_weight="balanced", max_iter=1000, random_state=seed, solver="liblinear"
+    )
+    # Accelerate-backed NumPy can emit benign matmul overflow warnings inside
+    # scikit-learn even for finite, scaled inputs; validate the output explicitly.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn")
+        logistic.fit(train_array.astype(np.float64), train_labels)
+        logistic_probability = logistic.predict_proba(test_array.astype(np.float64))[:, 1]
+    if not np.isfinite(logistic_probability).all():
+        raise RuntimeError("Logistic-regression baseline produced non-finite probabilities.")
+    numeric_indices = [features.index(value) for value in NUMERIC_FEATURES]
+    reduced_model, _ = _fit_mlp(
+        tf,
+        train_array[:, numeric_indices],
+        train_labels.astype(np.float32),
+        validation_array[:, numeric_indices],
+        validation_labels.astype(np.float32),
+        config,
+        class_weights,
+        seed,
+        verbose=0,
+    )
+    reduced_probability = reduced_model.predict(test_array[:, numeric_indices], verbose=0).reshape(-1)
+    ablation_metrics = pd.DataFrame([
+        {"model": "MLP full features", **_evaluation_row(test_labels, test_probability, operational_threshold)},
+        {"model": "MLP without warehouse ID", **_evaluation_row(test_labels, reduced_probability, operational_threshold)},
+        {"model": "Logistic regression", **_evaluation_row(test_labels, logistic_probability, operational_threshold)},
+    ])
+
     fixed_threshold_metrics = save_prediction_reports(
         predictions=predictions,
         history=history_frame,
         operational_threshold=operational_threshold,
         congestion_threshold=float(config["mlp"]["congestion_threshold"]),
         output_directory=output_directory,
+        split_predictions=split_predictions,
+        diagnostic_threshold=diagnostic_threshold,
+        seed_metrics=seed_metrics,
+        ablation_metrics=ablation_metrics,
+        false_negative_cost=float(config["mlp"].get("false_negative_cost", 5.0)),
+        false_positive_cost=float(config["mlp"].get("false_positive_cost", 1.0)),
     )
     metrics = {
         "test_pr_auc": float(average_precision_score(test_y, test_probability)),
@@ -210,6 +337,7 @@ def train(config: dict) -> dict[str, Any]:
         "test_balanced_accuracy_at_070": float(
             fixed_threshold_metrics["balanced_accuracy"]
         ),
+        "test_brier_score": float(fixed_threshold_metrics["brier_score"]),
         "test_true_negative_at_070": int(fixed_threshold_metrics["true_negative"]),
         "test_false_positive_at_070": int(fixed_threshold_metrics["false_positive"]),
         "test_false_negative_at_070": int(fixed_threshold_metrics["false_negative"]),
@@ -220,6 +348,7 @@ def train(config: dict) -> dict[str, Any]:
         "train_samples": int(train_mask.sum()),
         "validation_samples": int(validation_mask.sum()),
         "test_samples": int(test_mask.sum()),
+        "evaluation_seeds": evaluation_seeds,
     }
     with (output_directory / "metrics.json").open("w", encoding="utf-8") as stream:
         json.dump(metrics, stream, indent=2)

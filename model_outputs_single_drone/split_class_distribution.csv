@@ -1,0 +1,4 @@
+split,negative_samples,positive_samples,positive_rate
+train,16337,6291,0.2780183843026339
+validation,4395,965,0.18003731343283583
+test,4433,1099,0.19866232827187275

@@ -81,7 +81,7 @@ WEPAStack events
 ```bash
 source .venv/bin/activate
 python run_training.py
-python run_experiment.py --max-intervals 20 --aco-seeds 1
+python run_experiment.py --threshold-sweep
 ```
 
 Chạy test:
@@ -101,9 +101,15 @@ Các bảng và biểu đồ chính được tạo tự động khi train/chạy
 model_outputs_single_drone/classification_metrics_at_070.csv
 model_outputs_single_drone/per_warehouse_classification_metrics.csv
 model_outputs_single_drone/prediction_baseline_comparison.csv
+model_outputs_single_drone/split_classification_metrics.csv
+model_outputs_single_drone/validation_threshold_metrics.csv
+model_outputs_single_drone/calibration_table.csv
+model_outputs_single_drone/multi_seed_metrics.csv
+model_outputs_single_drone/ablation_metrics.csv
 model_outputs_single_drone/figures/
 outputs_single_drone/tables/key_results.csv
 outputs_single_drone/tables/constraint_summary.csv
+outputs_single_drone/tables/operational_threshold_sensitivity.csv
 outputs_single_drone/figures/
 ```
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from src.config_loader import (
@@ -17,7 +19,11 @@ from src.config_loader import (
 from src.data_pipeline import load_interval_table
 from src.metrics import operational_metrics, summarize_runs
 from src.predict_risk import RiskPredictor
-from src.result_reporting import save_operational_reports, save_route_example
+from src.result_reporting import (
+    save_operational_reports,
+    save_operational_threshold_sensitivity,
+    save_route_example,
+)
 from src.rolling_simulation import SUPPORTED_POLICIES, run_simulation
 
 
@@ -42,6 +48,11 @@ def main() -> None:
     parser.add_argument(
         "--aco-seeds", type=int, default=None,
         help="Limit the configured ACO seed list.",
+    )
+    parser.add_argument(
+        "--threshold-sweep",
+        action="store_true",
+        help="Run MLP-ACO over configured risk thresholds using the first ACO seed.",
     )
     args = parser.parse_args()
 
@@ -130,6 +141,36 @@ def main() -> None:
             warehouse_coordinates(config),
             output_root / "figures" / "mlp_aco_route_example.png",
         )
+
+    if args.threshold_sweep:
+        if predictor is None:
+            raise FileNotFoundError("Threshold sensitivity requires a trained MLP model.")
+        sweep_seed = configured_seeds[0]
+        threshold_rows = []
+        configured_threshold = float(config["mlp"]["risk_threshold"])
+        thresholds = [float(value) for value in config["simulation"]["threshold_sweep"]]
+        for threshold in thresholds:
+            existing = metrics_table.loc[
+                metrics_table["policy"].eq("mlp_aco")
+                & metrics_table["seed"].eq(sweep_seed)
+            ]
+            if np.isclose(threshold, configured_threshold) and not existing.empty:
+                values = existing.iloc[0].drop(labels=["policy", "seed"]).to_dict()
+            else:
+                sweep_config = deepcopy(config)
+                sweep_config["mlp"]["risk_threshold"] = threshold
+                interval_log, _ = run_simulation(
+                    intervals,
+                    sweep_config,
+                    "mlp_aco",
+                    predictor=predictor,
+                    seed=sweep_seed,
+                )
+                values = operational_metrics(interval_log)
+            values.setdefault("below_threshold_visited", 0)
+            threshold_rows.append({"threshold": threshold, "seed": sweep_seed, **values})
+            print(json.dumps({"threshold": threshold, "seed": sweep_seed, **values}, indent=2))
+        save_operational_threshold_sensitivity(pd.DataFrame(threshold_rows), output_root)
     scope = {
         "full_test_period": args.max_intervals is None,
         "time_bins": int(intervals["time_bin"].nunique()),
@@ -137,6 +178,7 @@ def main() -> None:
         "policies": policies,
         "aco_seeds": configured_seeds,
         "prediction_threshold": float(config["mlp"]["risk_threshold"]),
+        "threshold_sweep_run": bool(args.threshold_sweep),
     }
     with (output_root / "experiment_scope.json").open("w", encoding="utf-8") as stream:
         json.dump(scope, stream, indent=2, ensure_ascii=False)

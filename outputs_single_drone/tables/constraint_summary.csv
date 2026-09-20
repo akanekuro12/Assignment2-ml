@@ -1,0 +1,5 @@
+policy,max_route_distance_observed,route_distance_limit,max_energy_observed,battery_limit,max_payload_observed,payload_limit,constraint_violations,all_constraints_satisfied
+nearest_first,10.0,30.0,10.0,30.0,30.0,30.0,0,True
+fullest_first,10.0,30.0,10.0,30.0,30.0,30.0,0,True
+aco_current,10.0,30.0,10.0,30.0,30.0,30.0,0,True
+mlp_aco,10.0,30.0,10.0,30.0,30.0,30.0,0,True

@@ -1,0 +1,25 @@
+{
+  "full_test_period": true,
+  "time_bins": 1387,
+  "rows": 5548,
+  "policies": [
+    "nearest_first",
+    "fullest_first",
+    "aco_current",
+    "mlp_aco"
+  ],
+  "aco_seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "prediction_threshold": 0.7,
+  "threshold_sweep_run": true
+}

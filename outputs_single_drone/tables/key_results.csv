@@ -1,0 +1,5 @@
+policy,total_overflow_units_mean,overflow_rate_mean,total_collected_units_mean,collection_ratio_mean,total_route_distance_mean,total_energy_used_mean,number_of_sorties_mean,active_visit_rate_mean,max_active_warehouses_interval_max,intervals_with_multiple_active_warehouses_mean,constraint_violations_mean,below_threshold_visited_mean,algorithm_runtime_seconds_mean
+aco_current,6219.0,0.06795241528478731,25710.0,0.09950345030439309,8570.0,8570.0,857.0,1.0,1,0.0,0.0,0.0,8.014467875200031
+fullest_first,6219.0,0.06795241528478731,25710.0,0.09950345030439309,8570.0,8570.0,857.0,1.0,1,0.0,0.0,0.0,0.014506329000052887
+mlp_aco,5511.0,0.05749819754866618,26448.0,0.13040069815255817,8840.0,8840.0,884.0,1.0,1,0.0,0.0,0.0,8.003275804100152
+nearest_first,6219.0,0.06795241528478731,25710.0,0.09950345030439309,8570.0,8570.0,857.0,1.0,1,0.0,0.0,0.0,0.014450169000004731

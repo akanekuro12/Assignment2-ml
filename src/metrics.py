@@ -52,6 +52,10 @@ def summarize_runs(run_metrics: pd.DataFrame) -> pd.DataFrame:
     numeric = [
         column for column in run_metrics.select_dtypes(include="number").columns if column != "seed"
     ]
-    summary = run_metrics.groupby("policy")[numeric].agg(["mean", "std", "min", "max"])
+    summary = run_metrics.groupby("policy")[numeric].agg(["mean", "std", "min", "max", "count"])
     summary.columns = [f"{metric}_{stat}" for metric, stat in summary.columns]
+    for metric in numeric:
+        standard_error = summary[f"{metric}_std"] / np.sqrt(summary[f"{metric}_count"])
+        summary[f"{metric}_ci95_low"] = summary[f"{metric}_mean"] - 1.96 * standard_error
+        summary[f"{metric}_ci95_high"] = summary[f"{metric}_mean"] + 1.96 * standard_error
     return summary.sort_index().reset_index()
