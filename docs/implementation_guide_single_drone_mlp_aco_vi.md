@@ -1,6 +1,7 @@
 # Đặc tả triển khai MLP–ACO một drone
 
-Đây là nguồn hướng dẫn chính cho project. Nếu tài liệu multi-drone cũ mâu thuẫn với file này, ưu tiên tài liệu này và `config/experiment.yaml`.
+Đây là nguồn hướng dẫn triển khai chính của project và phải được đọc cùng
+`config/experiment.yaml`.
 
 ## 1. Kiến trúc bắt buộc
 
@@ -247,4 +248,7 @@ PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache \
 .venv/bin/python run_experiment.py --max-intervals 20 --aco-seeds 1
 ```
 
-Artifact mới ghi vào `model_outputs_single_drone/` và `outputs_single_drone/`; không ghi đè artifact multi-drone cũ.
+Khi chạy lại pipeline, artifact MLP sẽ được tạo trong
+`model_outputs_single_drone/` và kết quả routing sẽ được tạo trong
+`outputs_single_drone/`. Hai thư mục này hiện không phải source code và có thể
+được tạo lại từ dữ liệu, cấu hình và các entry point của project.

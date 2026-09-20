@@ -1,6 +1,11 @@
 BÁO CÁO PHÂN TÍCH DATASET WEPASTACKS INBOUND
 ============================================================
 
+Ghi chú phạm vi: tài liệu này chỉ phân tích dataset đầu vào. Kiến trúc hiện hành
+được định nghĩa trong `implementation_guide_single_drone_mlp_aco_vi.md`; các
+con số hoặc đề xuất baseline trong tài liệu phân tích này không thay thế cấu
+hình và code hiện tại.
+
 File dữ liệu: wepastacks_inbound_clean.csv
 Quy mô: 205,258 pallet events
 Khoảng thời gian: ngày tương đối 2 đến ngày 89

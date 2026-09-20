@@ -67,7 +67,7 @@
 \begin{abstract}
 This project studies whether recent inbound activity can support warehouse-buffer congestion prediction and proactive pickup decisions. The provided WEPAStacks delivery records are aggregated into 15-minute intervals for four inbound points. A multilayer perceptron (MLP) maps seven current-and-past features to a sigmoid risk score for each warehouse. The simulated target is positive when the current stock plus arrivals during the next 60 minutes reaches 80\% of warehouse capacity under a no-drone counterfactual.
 
-The updated routing design deliberately separates prediction from optimisation. Warehouses with goods are passed to ant colony optimisation (ACO) only when their MLP score is at least 0.70. ACO then uses pheromone and distance---not the MLP score---to construct one route for one simulated drone. Its objective first penalises unvisited active warehouses and then route distance. On the chronological test set, the MLP at the fixed 0.70 threshold records 98.59\% precision, 95.45\% recall, and 96.99\% F1, compared with 87.69\% F1 for a current-fill rule. This evidence is limited: all positive validation and test labels occur at Warehouse~1. The available routing output covers only 20 intervals and one ACO seed, so it is reported as a smoke test rather than evidence of operational superiority.
+The updated routing design deliberately separates prediction from optimisation. Warehouses with goods are passed to ant colony optimisation (ACO) only when their MLP score is at least 0.70. ACO then uses pheromone and distance---not the MLP score---to construct one route for one simulated drone. Its objective first penalises unvisited active warehouses and then route distance. The current repository deliberately contains no trained-model or routing-result artifacts: earlier exploratory outputs were removed because they did not provide sufficient evidence for the research question. This document therefore specifies the current method and the evidence that a future controlled run must produce, without making numerical performance claims.
 \end{abstract}
 
 \textbf{Keywords:} warehouse congestion, multilayer perceptron, time-series classification, ant colony optimisation, drone routing, WEPAStacks
@@ -142,8 +142,8 @@ where $A_{i,t}$ is the available stock before the current pickup decision and $K
 \toprule
 Phase & Interface & Valid input & Output \\
 \midrule
-Training & One warehouse--interval sample & A seven-value vector in the fixed order shown above; the three numeric features are scaled from training statistics and the four dock indicators remain binary & One binary label indicating whether no-drone stock reaches 80\% capacity during the next four intervals \\
-MLP deployment & One simultaneous four-warehouse state & A $4\times7$ \texttt{float32} feature matrix containing current fill ratio, current arrivals, trailing four-interval mean, and dock identity & A vector $\hat{\mathbf p}_t\in[0,1]^4$ containing one sigmoid score per warehouse; scores are not assumed to be calibrated probabilities \\
+Training-label construction & One warehouse--interval sample & A seven-value vector in the fixed order shown above; the three numeric features are scaled from training statistics and the four dock indicators remain binary & One binary ground-truth label indicating whether no-drone stock reaches 80\% capacity during the next four intervals; 0.80 is not an MLP output threshold \\
+MLP inference & One simultaneous four-warehouse state & A $4\times7$ \texttt{float32} feature matrix containing current fill ratio, current arrivals, trailing four-interval mean, and dock identity & A vector $\hat{\mathbf p}_t\in[0,1]^4$ containing one continuous sigmoid score per warehouse; the MLP does not output a fixed value of 0.80 \\
 Pre-ACO filter & Current goods and four MLP scores & Warehouse $i$ is retained only if $A_{i,t}>0$ and $\hat p_{i,t}\geq0.70$ & A sorted mapping from active warehouse identifier to currently available goods \\
 ACO deployment & Filtered goods, a $5\times5$ distance matrix, one drone state, ACO parameters, and seed & Non-negative goods; valid depot/warehouse nodes; positive payload, energy, battery, and maximum-distance limits & One depot-to-depot route, proportional pickup amounts, route distance, energy used, remaining active goods, objective value, and validation status \\
 \bottomrule
@@ -154,7 +154,7 @@ ACO deployment & Filtered goods, a $5\times5$ distance matrix, one drone state, 
 
 Given a low fill ratio and low recent arrivals, the MLP should produce a lower score than for a state close to the congestion boundary with sustained arrivals. Because the target includes stock that is already at the 80\% threshold, evaluation must distinguish current-state detection from genuine below-threshold forecasting. At deployment, a score of 0.70 is included and 0.699 is excluded. A warehouse with no goods is excluded even if its score is high. ACO may visit only retained warehouses. The route must start and end at depot 0, visit a warehouse at most once, remain within 30~km and 30 energy units, and collect at most 30 cargo units.
 
-Two thresholds have different meanings. The congestion threshold of 0.80 defines the simulated target in terms of capacity. The operational score threshold of 0.70 filters warehouses before routing and is fixed in the current specification. A validation-optimal threshold is saved only as a diagnostic; it does not control the route. This distinction prevents the reported validation threshold from silently changing the operational experiment.
+Two thresholds have different meanings. The congestion threshold of 0.80 is used only to construct the binary ground-truth label from warehouse capacity. The MLP itself outputs a continuous score between 0 and 1. The operational score threshold of 0.70 converts that score into the routing decision and is fixed in the current specification. Therefore, 0.80 is not the MLP decision threshold. A validation-optimal threshold is saved only as a diagnostic; it does not control the route. This distinction prevents the reported validation threshold from silently changing the operational experiment.
 
 \subsection{Evaluation questions and success criteria}
 
@@ -426,7 +426,7 @@ Hidden units & 32, 16 & Trainable parameters & 801 \\
 Learning rate & 0.001 & Batch size & 256 \\
 Maximum epochs & 100 & Early-stopping patience & 8 \\
 Training boundary & Day 60 & Validation boundary & Day 74 \\
-Operational threshold & Fixed at 0.70 & Validation diagnostic & 0.9313 \\
+Operational threshold & Fixed at 0.70 & Validation diagnostic & Saved when training is run \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -435,95 +435,13 @@ Operational threshold & Fixed at 0.70 & Validation diagnostic & 0.9313 \\
 
 Accuracy alone is insufficient when class balance and temporal coverage differ across docks. Precision measures how many warnings are correct. Recall measures how many threshold cases are detected. F1 balances precision and recall. Balanced accuracy averages sensitivity and specificity. Average precision summarises the precision--recall curve \cite{saito2015}. The confusion matrix and per-dock support are essential because strong global performance can still reflect a dock-identity shortcut rather than general temporal prediction.
 
-For routing, the metrics are overflow, collected goods, energy, distance, number of sorties, active-warehouse visit rate, runtime, and independently recomputed constraint violations. The primary comparison is MLP--ACO against nearest-first, fullest-first, and ACO-current. A complete routing result requires the entire held-out period and repeated ACO seeds. The present operational run does not meet that requirement and is labelled as a smoke test.
+For routing, the metrics are overflow, collected goods, energy, distance, number of sorties, active-warehouse visit rate, runtime, and independently recomputed constraint violations. The primary comparison is MLP--ACO against nearest-first, fullest-first, and ACO-current. A complete routing result requires the entire held-out period and repeated ACO seeds. No operational result is currently retained in the repository.
 
-\section{Results}
+\section{Results Status}
 
-\subsection{Training behaviour}
+No trained model, prediction table, routing log, metric table, or generated figure is currently retained. Previous exploratory artifacts were deleted after review because the observed data did not exercise simultaneous multi-warehouse routing and therefore did not provide a meaningful evaluation of ACO route ordering. The report must not reproduce numerical claims from those deleted artifacts.
 
-Training stopped after 75 epochs. The lowest recorded validation loss was 0.04998 at epoch 67 using one-based numbering; early stopping then restored those weights. Figure~\ref{fig:training-results} shows rapid improvement during the first epochs and a much slower change afterwards. Similar training and validation curves are useful evidence against severe overfitting in this run, but they do not address the warehouse-coverage shift discussed below.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.96\textwidth]{training_history.png}
-\caption{Recorded training and validation binary cross-entropy and PR--AUC.}
-\label{fig:training-results}
-\end{figure}
-
-\subsection{Held-out prediction results}
-
-Table~\ref{tab:prediction-baselines} evaluates the fixed operational threshold of 0.70 on the chronological test set. The always-negative rule illustrates why accuracy alone is insufficient: it obtains 80.13\% accuracy while detecting no positive case. The current-fill rule is stronger, but the MLP increases recall from 78.07\% to 95.45\% while retaining 98.59\% precision. The MLP therefore exceeds both declared prediction baselines on this test set.
-
-\begin{table}[H]
-\centering
-\caption{Prediction comparison on 5,532 chronological test samples}
-\label{tab:prediction-baselines}
-\small
-\begin{tabular}{lrrrrr}
-\toprule
-Method & Accuracy & Balanced accuracy & Precision & Recall & F1 \\
-\midrule
-Always negative & 80.13\% & 50.00\% & 0.00\% & 0.00\% & 0.00\% \\
-Current fill $\geq0.80$ & 95.64\% & 89.04\% & 100.00\% & 78.07\% & 87.69\% \\
-\rowcolor{paleblue}MLP score $\geq0.70$ & 98.83\% & 97.56\% & 98.59\% & 95.45\% & 96.99\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The MLP test PR--AUC is 99.38\% and ROC--AUC is 99.84\%. At the fixed threshold, the confusion matrix contains 4,418 true negatives, 15 false positives, 50 false negatives, and 1,049 true positives. A false negative is operationally important because the hard filter removes that warehouse from ACO; a false positive can instead create an unnecessary active candidate.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.62\textwidth]{precision_recall_curve.png}
-\caption{Test precision--recall curve. The red point is the fixed operational threshold of 0.70; the dashed line is the test positive rate.}
-\label{fig:pr-curve}
-\end{figure}
-
-\subsection{Warehouse support and interpretation}
-
-The global result does not provide equal evidence for all warehouses. Warehouse~1 contains both classes and all 1,099 positive test samples. Warehouses~2--4 contain no positive test samples, so their positive-class precision, recall, F1, and AUC are not interpretable.
-
-\begin{table}[H]
-\centering
-\caption{Test support and interpretable MLP metrics by warehouse}
-\label{tab:warehouse-support}
-\small
-\begin{tabular}{lrrrrr}
-\toprule
-Warehouse & Samples & Positive & Negative & Recall & F1 \\
-\midrule
-1 & 1,383 & 1,099 & 284 & 95.45\% & 96.99\% \\
-2 & 1,383 & 0 & 1,383 & Not defined & Not defined \\
-3 & 1,383 & 0 & 1,383 & Not defined & Not defined \\
-4 & 1,383 & 0 & 1,383 & Not defined & Not defined \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-This support pattern prevents a claim that the model detects positive congestion cases at Warehouses~2--4. Nevertheless, Warehouse~1 itself contains 284 negative and 1,099 positive cases, so its result is not based only on warehouse identity. An ablation without the one-hot warehouse features is still required to quantify their contribution.
-
-\subsection{Routing smoke test}
-
-The current operational artifact covers 20 test intervals, 80 warehouse rows, and one ACO seed. It is not a full held-out or repeated-seed experiment. Table~\ref{tab:routing-smoke} is included to verify the updated single-drone flow and to expose its trade-off, not to establish superiority.
-
-\begin{table}[H]
-\centering
-\caption{Preliminary 20-interval, one-seed routing smoke test}
-\label{tab:routing-smoke}
-\small
-\begin{tabular}{lrrrrrr}
-\toprule
-Policy & Overflow & Collected & Distance & Energy & Sorties & Violations \\
-\midrule
-Nearest-first & 97 & 480 & 160 & 160 & 16 & 0 \\
-Fullest-first & 97 & 480 & 160 & 160 & 16 & 0 \\
-ACO-current & 97 & 480 & 160 & 160 & 16 & 0 \\
-\rowcolor{paleblue}MLP--ACO & 0 & 600 & 200 & 200 & 20 & 0 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-In this short run, MLP--ACO activates and serves a route in all 20 intervals, whereas the current-fill policies do so in 16. The additional four sorties coincide with 120 more collected units and 97 fewer overflow units, but also with 40 additional distance and energy units. Because the run contains one seed and a small prefix of the test stream, these differences may depend on the selected interval window and cannot answer the research question.
+A new result section may be completed only after a controlled rerun records the exact configuration and demonstrates both parts of the task. Prediction evidence must include class support overall and per warehouse, PR--AUC, ROC--AUC, precision, recall, F1, a confusion matrix at the fixed 0.70 operational threshold, and declared simple baselines. Routing evidence must cover the complete held-out stream with all configured seeds and must report how often zero, one, or multiple warehouses are active simultaneously. If no interval contains at least two feasible active warehouses, the experiment may evaluate dispatch timing but cannot demonstrate ACO route-order optimisation.
 
 \subsection{Implementation verification}
 
@@ -533,9 +451,7 @@ A fresh run of the current test suite completed 21 tests with no failures. The t
 
 \subsection{Answer to the research question}
 
-The prediction evidence is positive but narrow. At the fixed 0.70 threshold, the MLP improves F1 and recall over the current-fill rule on the present chronological test set. This supports the claim that the seven features contain information beyond the instantaneous 0.80 fill decision for Warehouse~1. It does not establish positive-case performance for Warehouses~2--4, which have no positive validation or test support.
-
-The operational part of the research question remains open. The smoke test is consistent with the idea that earlier MLP activation can exchange extra trips and energy for lower overflow. However, 20 intervals and one seed are insufficient to estimate performance over the full test period or stochastic variation. No final claim that MLP filtering improves ACO is made.
+The research question is currently unanswered because all exploratory result artifacts have been removed. The implementation defines a reproducible experiment, but code execution alone is not evidence that the MLP improves prediction or that MLP filtering improves routing. Any future answer must be based on regenerated artifacts with documented support, baselines, full-period routing, repeated seeds, and constraint checks.
 
 \subsection{Training loss versus the practical objective}
 
@@ -545,7 +461,7 @@ The ACO objective also differs from the operational objective. Equation~\eqref{e
 
 \subsection{Implications}
 
-The fixed operational threshold is 0.70, whereas the validation-F1 diagnostic threshold is 0.9313. The lower operational threshold is expected to admit more warehouses and favour recall, but its value was specified rather than selected by an operational validation study. A threshold-sensitivity experiment is therefore necessary. The sigmoid value should be called a risk score until calibration has been demonstrated.
+The fixed operational threshold is 0.70. A validation-F1 threshold may be saved diagnostically when training is run, but it does not control routing. Because 0.70 was specified rather than selected by an operational validation study, a threshold-sensitivity experiment is necessary. The sigmoid value should be called a risk score until calibration has been demonstrated.
 
 The single-drone design makes the algorithm easier to explain and validate. It also reduces the combinatorial difficulty: with at most four active warehouses there are only 24 complete visit orders before considering subsets. ACO remains a valid stochastic routing study, but an exact enumerator is computationally practical for this experiment and should be used more extensively as a reference.
 
@@ -563,7 +479,7 @@ The single-drone design makes the algorithm easier to explain and validate. It a
   \item \textbf{Simplified single-drone physics.} Battery is restored every 15 minutes and the model omits flight duration, charging time, weather, no-fly zones, and collision avoidance.
   \item \textbf{Hard filtering.} A score change from 0.699 to 0.700 can change routing eligibility even though the underlying states are almost identical.
   \item \textbf{Objective mismatch.} ACO minimises unvisited active warehouses and distance, not expected overflow or collected quantity.
-  \item \textbf{Incomplete routing evaluation.} The reported operational comparison contains 20 intervals and one ACO seed; it cannot estimate full-period or repeated-seed behaviour.
+  \item \textbf{No retained empirical evaluation.} Model and routing artifacts are currently absent, so the report makes no performance claim until a controlled rerun is accepted.
   \item \textbf{Small routing instance.} With four warehouses, exact enumeration may be more appropriate than ACO unless the study is explicitly framed as a prototype for larger instances.
 \end{enumerate}
 
@@ -581,22 +497,22 @@ The final routing experiment should run nearest-first, fullest-first, ACO-curren
 
 The updated system has a clear two-stage interface: the MLP produces four risk scores, a fixed 0.70 filter selects non-empty warehouses, and single-drone ACO builds a distance-based route over only those warehouses. The ACO objective penalises unvisited active warehouses before distance, and payload is divided proportionally after route construction. This description matches the current configuration and implementation; earlier multi-drone, urgency-weighted, and daily-battery formulations are not part of the reported method.
 
-On the current chronological test set, the MLP exceeds the always-negative and current-fill prediction baselines, reaching 96.99\% F1 at the fixed threshold. The result is supported for Warehouse~1 but not for positive cases at Warehouses~2--4. The routing smoke test shows a favourable overflow--energy trade-off for MLP--ACO over 20 intervals, but its scope is too small for a final operational conclusion. The complete held-out, ten-seed experiment remains necessary before claiming that MLP filtering improves routing.
+No empirical conclusion is currently reported. A future result must first establish adequate positive support for prediction and enough simultaneous active warehouses to exercise route ordering. If those conditions are not met, the project should explicitly limit its claim to implementation and dispatch filtering rather than claim that ACO solves a meaningful multi-stop optimisation problem.
 
 \section*{Reproducibility Checklist}
 \addcontentsline{toc}{section}{Reproducibility Checklist}
 
 \begin{itemize}
   \item Dataset file: \code{wepastacks_inbound_clean.csv}.
-  \item Single-drone MLP artifacts: \code{model_outputs_single_drone/mlp_congestion_aco.keras}, \code{feature_scaler.pkl}, \code{model_configuration.json}, \code{training_history.csv}, \code{metrics.json}, and \code{test_predictions.csv}.
-  \item Prediction tables and figures: \code{model_outputs_single_drone/prediction_baseline_comparison.csv}, \code{per_warehouse_classification_metrics.csv}, and the \code{figures} directory.
+  \item Training recreates \code{model_outputs_single_drone}; no generated model artifact is currently retained.
+  \item Accepted prediction evidence must include baseline, support, threshold, confusion-matrix, and per-warehouse tables.
   \item Command-line training entry point: \code{run_training.py}.
   \item Integrated experiment configuration: \code{config/experiment.yaml}.
   \item Routing entry point: \code{run_experiment.py}.
   \item Test command: \code{PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache .venv/bin/python -m unittest discover -s tests -v}.
   \item Current verification: 21 tests passed in the available virtual environment; rerun immediately before submission.
-  \item Preliminary operational outputs: \code{outputs_single_drone}; \code{experiment_scope.json} records that the present run is not the full test period.
-  \item Required final evidence: complete held-out routing runs and ten seeds for each stochastic ACO policy.
+  \item Routing recreates \code{outputs_single_drone}; no generated routing artifact is currently retained.
+  \item Required final evidence: complete held-out routing runs, ten seeds for each stochastic ACO policy, and the distribution of simultaneous active-warehouse counts.
 \end{itemize}
 
 \appendix
