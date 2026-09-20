@@ -91,7 +91,22 @@ PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache \
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Model mới nằm trong `model_outputs_single_drone/`; kết quả simulation nằm trong `outputs_single_drone/`. Artifact multi-drone cũ được giữ nguyên.
+Model hiện tại nằm trong `model_outputs_single_drone/`; kết quả simulation nằm trong
+`outputs_single_drone/`. Các artifact multi-drone cũ đã được loại bỏ.
+
+Các bảng và biểu đồ chính được tạo tự động khi train/chạy experiment:
+
+```text
+model_outputs_single_drone/classification_metrics_at_070.csv
+model_outputs_single_drone/per_warehouse_classification_metrics.csv
+model_outputs_single_drone/prediction_baseline_comparison.csv
+model_outputs_single_drone/figures/
+outputs_single_drone/tables/key_results.csv
+outputs_single_drone/tables/constraint_summary.csv
+outputs_single_drone/figures/
+```
+
+Bản tóm tắt kết quả cuối cùng nằm tại `outputs_single_drone/RESULTS.md`.
 
 ## 5. File chính
 

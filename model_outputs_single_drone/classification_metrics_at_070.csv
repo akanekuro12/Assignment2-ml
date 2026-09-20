@@ -1,0 +1,2 @@
+model,threshold,samples,positive_samples,negative_samples,predicted_positive,accuracy,balanced_accuracy,precision,recall,f1,true_negative,false_positive,false_negative,true_positive,pr_auc,roc_auc
+mlp,0.7,5532,1099,4433,1064,0.9882501807664498,0.9755601907851754,0.9859022556390977,0.9545040946314831,0.9699491447064262,4418,15,50,1049,0.9937619131618993,0.998350324423881

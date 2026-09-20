@@ -34,13 +34,6 @@ def select_active_warehouses(
     return sorted(active)
 
 
-def route_limits(drone: DroneState) -> tuple[float, float]:
-    """Return explicit distance limit and battery-implied distance limit."""
-    explicit = float(drone.max_route_distance_km)
-    battery_distance = float(drone.available_battery) / float(drone.energy_per_km)
-    return explicit, battery_distance
-
-
 def route_is_feasible(
     route: Sequence[int],
     drone: DroneState,

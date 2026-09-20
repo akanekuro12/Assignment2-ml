@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Mapping, Protocol
+from typing import Protocol
 
 import numpy as np
 import pandas as pd

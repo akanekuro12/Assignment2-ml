@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import random
-from pathlib import Path
 from typing import Any
 
 import joblib
@@ -23,6 +22,7 @@ from .feature_builder import (
     feature_names,
 )
 from .queue_simulator import simulate_historical_queue
+from .result_reporting import save_prediction_reports
 
 
 def prepare_training_data(config: dict) -> tuple[pd.DataFrame, tuple[pd.Series, pd.Series, pd.Series]]:
@@ -162,9 +162,8 @@ def train(config: dict) -> dict[str, Any]:
     output_directory.mkdir(parents=True, exist_ok=True)
     model.save(output_directory / "mlp_congestion_aco.keras")
     joblib.dump(scaler, output_directory / "feature_scaler.pkl")
-    pd.DataFrame(history.history).rename_axis("epoch").reset_index().to_csv(
-        output_directory / "training_history.csv", index=False
-    )
+    history_frame = pd.DataFrame(history.history).rename_axis("epoch").reset_index()
+    history_frame.to_csv(output_directory / "training_history.csv", index=False)
 
     configuration = {
         "feature_names": features,
@@ -194,9 +193,27 @@ def train(config: dict) -> dict[str, Any]:
         test_probability >= operational_threshold
     ).astype(np.int8)
     predictions.to_csv(output_directory / "test_predictions.csv", index=False)
+    fixed_threshold_metrics = save_prediction_reports(
+        predictions=predictions,
+        history=history_frame,
+        operational_threshold=operational_threshold,
+        congestion_threshold=float(config["mlp"]["congestion_threshold"]),
+        output_directory=output_directory,
+    )
     metrics = {
         "test_pr_auc": float(average_precision_score(test_y, test_probability)),
         "test_roc_auc": float(roc_auc_score(test_y, test_probability)),
+        "test_precision_at_070": float(fixed_threshold_metrics["precision"]),
+        "test_recall_at_070": float(fixed_threshold_metrics["recall"]),
+        "test_f1_at_070": float(fixed_threshold_metrics["f1"]),
+        "test_accuracy_at_070": float(fixed_threshold_metrics["accuracy"]),
+        "test_balanced_accuracy_at_070": float(
+            fixed_threshold_metrics["balanced_accuracy"]
+        ),
+        "test_true_negative_at_070": int(fixed_threshold_metrics["true_negative"]),
+        "test_false_positive_at_070": int(fixed_threshold_metrics["false_positive"]),
+        "test_false_negative_at_070": int(fixed_threshold_metrics["false_negative"]),
+        "test_true_positive_at_070": int(fixed_threshold_metrics["true_positive"]),
         "operational_threshold": operational_threshold,
         "validation_optimal_threshold_diagnostic": diagnostic_threshold,
         "validation_f1_at_diagnostic_threshold": validation_f1,

@@ -8,10 +8,16 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.config_loader import DEFAULT_CONFIG_PATH, load_config, resolve_project_path
+from src.config_loader import (
+    DEFAULT_CONFIG_PATH,
+    load_config,
+    resolve_project_path,
+    warehouse_coordinates,
+)
 from src.data_pipeline import load_interval_table
 from src.metrics import operational_metrics, summarize_runs
 from src.predict_risk import RiskPredictor
+from src.result_reporting import save_operational_reports, save_route_example
 from src.rolling_simulation import SUPPORTED_POLICIES, run_simulation
 
 
@@ -74,6 +80,7 @@ def main() -> None:
     if args.aco_seeds is not None:
         configured_seeds = configured_seeds[: args.aco_seeds]
     metric_rows = []
+    mlp_route_example = None
     for policy in policies:
         stochastic = {"aco_current", "mlp_aco"}
         seeds = configured_seeds if policy in stochastic else [int(config["seed"])]
@@ -89,13 +96,50 @@ def main() -> None:
             interval_log.to_csv(log_directory / f"interval_{suffix}.csv", index=False)
             route_log.to_csv(route_directory / f"routes_{suffix}.csv", index=False)
             metrics = operational_metrics(interval_log)
+            metrics["below_threshold_visited"] = (
+                int(
+                    (
+                        interval_log["visited"]
+                        & interval_log["risk_probability"].lt(
+                            float(config["mlp"]["risk_threshold"])
+                        )
+                    ).sum()
+                )
+                if policy == "mlp_aco"
+                else 0
+            )
             metric_rows.append({"policy": policy, "seed": seed, **metrics})
+            if policy == "mlp_aco" and mlp_route_example is None:
+                mlp_route_example = route_log.copy()
             print(json.dumps({"policy": policy, "seed": seed, **metrics}, indent=2))
 
     metrics_table = pd.DataFrame(metric_rows)
     metrics_table.to_csv(table_directory / "operational_metrics_by_run.csv", index=False)
     summary = summarize_runs(metrics_table)
-    summary.to_csv(table_directory / "baseline_comparison.csv")
+    summary.to_csv(table_directory / "baseline_comparison.csv", index=False)
+    summary.to_csv(table_directory / "operational_summary.csv", index=False)
+    save_operational_reports(
+        run_metrics=metrics_table,
+        summary=summary,
+        output_root=output_root,
+        drone_config=config["drones"]["fleet"][0],
+    )
+    if mlp_route_example is not None:
+        save_route_example(
+            mlp_route_example,
+            warehouse_coordinates(config),
+            output_root / "figures" / "mlp_aco_route_example.png",
+        )
+    scope = {
+        "full_test_period": args.max_intervals is None,
+        "time_bins": int(intervals["time_bin"].nunique()),
+        "rows": int(len(intervals)),
+        "policies": policies,
+        "aco_seeds": configured_seeds,
+        "prediction_threshold": float(config["mlp"]["risk_threshold"]),
+    }
+    with (output_root / "experiment_scope.json").open("w", encoding="utf-8") as stream:
+        json.dump(scope, stream, indent=2, ensure_ascii=False)
     print(f"Saved experiment outputs to {output_root}")
 
 

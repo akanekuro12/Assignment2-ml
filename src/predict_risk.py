@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Mapping
 
 import joblib
 import numpy as np
@@ -38,7 +37,9 @@ class RiskPredictor:
             transformed[self.numeric_feature_names]
         )
         values = transformed[self.feature_names].to_numpy(dtype=np.float32)
-        return self.model.predict(values, verbose=0).reshape(-1)
+        # Calling the model directly avoids the large setup cost of model.predict
+        # inside every 15-minute rolling-simulation interval.
+        return np.asarray(self.model(values, training=False)).reshape(-1)
 
     def predict_by_warehouse(self, features: pd.DataFrame) -> dict[int, float]:
         probabilities = self.predict_frame(features)
@@ -46,13 +47,3 @@ class RiskPredictor:
             int(node): float(probability)
             for node, probability in zip(features.index, probabilities)
         }
-
-
-class ConstantRiskPredictor:
-    """Small deterministic predictor used by tests and non-ML baselines."""
-
-    def __init__(self, probability: float = 0.0):
-        self.probability = float(probability)
-
-    def predict_by_warehouse(self, features: pd.DataFrame) -> dict[int, float]:
-        return {int(node): self.probability for node in features.index}
