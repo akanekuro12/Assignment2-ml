@@ -540,6 +540,9 @@ def _plot_training_history(history: pd.DataFrame, path: Path) -> None:
     figure, axes = plt.subplots(1, 2, figsize=(11, 4.2))
     axes[0].plot(history["epoch"] + 1, history["loss"], label="Train")
     axes[0].plot(history["epoch"] + 1, history["val_loss"], label="Validation")
+    best_index = int(history["val_loss"].idxmin())
+    best_epoch = int(history.loc[best_index, "epoch"] + 1)
+    axes[0].axvline(best_epoch, color="black", linestyle=":", label=f"Best epoch {best_epoch}")
     axes[0].set(title="Binary cross-entropy", xlabel="Epoch", ylabel="Loss")
     axes[0].legend()
     metric = "pr_auc" if "pr_auc" in history else "precision"

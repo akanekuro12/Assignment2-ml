@@ -82,6 +82,7 @@ WEPAStack events
 source .venv/bin/activate
 python run_training.py
 python run_experiment.py --threshold-sweep
+python run_part_b_experiments.py
 ```
 
 Chạy test:
@@ -91,9 +92,10 @@ PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache \
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Sau khi chạy, model sẽ được tạo trong `model_outputs_single_drone/` và kết quả
-simulation sẽ được tạo trong `outputs_single_drone/`. Hiện các artifact cũ đã
-được xóa; hai thư mục này được tái tạo tự động bởi các entry point tương ứng.
+Sau khi chạy, model và các architecture/optimizer-validation artifact được tạo trong
+`model_outputs_single_drone/`. Kết quả simulation và synthetic ACO benchmark
+được tạo trong `outputs_single_drone/`. Các entry point có thể tái tạo những
+artifact này từ cấu hình hiện tại.
 
 Các bảng và biểu đồ chính được tạo tự động khi train/chạy experiment:
 
@@ -106,10 +108,13 @@ model_outputs_single_drone/validation_threshold_metrics.csv
 model_outputs_single_drone/calibration_table.csv
 model_outputs_single_drone/multi_seed_metrics.csv
 model_outputs_single_drone/ablation_metrics.csv
+model_outputs_single_drone/architecture_comparison_summary.csv
+model_outputs_single_drone/optimizer_comparison_summary.csv
 model_outputs_single_drone/figures/
 outputs_single_drone/tables/key_results.csv
 outputs_single_drone/tables/constraint_summary.csv
 outputs_single_drone/tables/operational_threshold_sensitivity.csv
+outputs_single_drone/tables/aco_exact_benchmark_summary.csv
 outputs_single_drone/figures/
 ```
 
@@ -127,6 +132,8 @@ src/routing_utils.py         lọc 70%, pickup và objective
 src/aco_optimizer.py         single-drone ACO
 src/solution_validator.py    kiểm tra constraint độc lập
 src/rolling_simulation.py    pipeline end-to-end
+src/part_b_experiments.py    architecture, optimizer và synthetic ACO checks
+run_part_b_experiments.py    entry point cho Part B experiments
 ```
 
 Đặc tả triển khai chi tiết bằng tiếng Việt nằm tại `docs/implementation_guide_single_drone_mlp_aco_vi.md`.

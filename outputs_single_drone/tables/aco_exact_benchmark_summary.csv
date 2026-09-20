@@ -1,0 +1,4 @@
+active_warehouses,scenarios,aco_runs,optimal_hit_rate,mean_objective_gap,maximum_objective_gap,mean_relative_gap,mean_aco_runtime_seconds,mean_exact_runtime_seconds,constraint_violations
+2,5,50,1.0,0.0,0.0,0.0,0.011871562520000368,3.237519999714778e-05,0
+3,5,50,1.0,0.0,0.0,0.0,0.016794824199999992,7.389159999746653e-05,0
+4,5,50,1.0,0.0,0.0,0.0,0.01803746251999982,0.0001464417999983425,0

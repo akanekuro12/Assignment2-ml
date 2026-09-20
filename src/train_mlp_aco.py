@@ -102,8 +102,16 @@ def _fit_mlp(
     for index, units in enumerate(hidden_units, start=1):
         model.add(tf.keras.layers.Dense(units, activation="relu", name=f"dense_{index}"))
     model.add(tf.keras.layers.Dense(1, activation="sigmoid", name="risk_probability"))
+    optimizer_name = str(config["mlp"].get("optimizer", "adam")).lower()
+    learning_rate = float(config["mlp"]["learning_rate"])
+    if optimizer_name == "adam":
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+    elif optimizer_name == "sgd":
+        optimizer = tf.keras.optimizers.SGD(learning_rate=learning_rate)
+    else:
+        raise ValueError(f"Unsupported MLP optimiser: {optimizer_name}")
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=float(config["mlp"]["learning_rate"])),
+        optimizer=optimizer,
         loss="binary_crossentropy",
         metrics=[
             tf.keras.metrics.Precision(name="precision"),
@@ -228,6 +236,7 @@ def train(config: dict) -> dict[str, Any]:
         "historical_queue_policy": str(config["simulation"]["historical_queue_policy"]),
         "queue_semantics": "arrivals_minus_single_drone_filtered_route_pickup_no_service_rate",
         "random_seed": seed,
+        "optimizer": str(config["mlp"].get("optimizer", "adam")),
     }
     with (output_directory / "model_configuration.json").open("w", encoding="utf-8") as stream:
         json.dump(configuration, stream, indent=2, ensure_ascii=False)

@@ -12,6 +12,7 @@ mlp:
   train_end_day: 60
   validation_end_day: 74
   hidden_units: [32, 16]
+  optimizer: adam
   learning_rate: 0.001
   batch_size: 256
   max_epochs: 100
@@ -72,3 +73,20 @@ simulation:
 outputs:
   model_directory: model_outputs_single_drone
   experiment_directory: outputs_single_drone
+
+part_b_experiments:
+  architectures:
+    - [16]
+    - [32, 16]
+    - [64, 32]
+  architecture_seeds: [42, 43, 44]
+  optimizers:
+    - name: Adam
+      optimizer: adam
+      learning_rate: 0.001
+    - name: SGD
+      optimizer: sgd
+      learning_rate: 0.01
+  synthetic_cases_per_size: 5
+  synthetic_scenario_seed: 2026
+  synthetic_aco_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

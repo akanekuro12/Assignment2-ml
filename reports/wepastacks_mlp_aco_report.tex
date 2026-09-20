@@ -325,7 +325,34 @@ The forward pass can be written as
 \hat{p} &= \sigma(\mathbf{w}_3^\top\mathbf{h}_2+b_3).
 \end{align}
 
-The two hidden layers allow the model to learn nonlinear relationships between current fill and recent arrivals. The complete network has only 801 trainable parameters, so it is a lightweight model for this tabular dataset. ReLU is used in the hidden layers, and the sigmoid output maps the final value to a score between zero and one \cite{rumelhart1986,glorot2010}. The 32--16 structure is a practical baseline and is not claimed to be optimal.
+The two hidden layers allow the model to learn nonlinear relationships between current fill and recent arrivals. The complete network has only 801 trainable parameters, so it is a lightweight model for this tabular dataset. ReLU is used in the hidden layers, and the sigmoid output maps the final value to a score between zero and one \cite{rumelhart1986,glorot2010}.
+
+\subsubsection{Validation comparison of model sizes}
+
+Three small architectures were trained with seeds 42, 43, and 44. Only validation data was used in this comparison. Table~\ref{tab:architecture-comparison} reports the mean results. The 32--16 model obtained the highest mean F1 at the operational threshold. The 64--32 model produced almost the same PR--AUC but required more than three times as many parameters. The 32--16 model was therefore retained as a reasonable balance between validation performance and model size; the comparison does not prove that it is the only suitable architecture.
+
+\begin{table}[H]
+\centering
+\caption{Architecture comparison on validation data over three training seeds}
+\label{tab:architecture-comparison}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Hidden units & Parameters & PR--AUC & F1 at 0.70 & Mean best epoch \\
+\midrule
+16 & 145 & $0.9908\pm0.0008$ & $0.9690\pm0.0003$ & 99.7 \\
+\rowcolor{paleblue}32--16 & 801 & $0.9917\pm0.0002$ & $0.9693\pm0.0000$ & 47.3 \\
+64--32 & 2,625 & $0.9917\pm0.0003$ & $0.9690\pm0.0003$ & 32.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{architecture_comparison.png}
+\caption{Validation performance and parameter count for the three candidate MLP architectures.}
+\label{fig:architecture-comparison}
+\end{figure}
 
 \subsection{Loss, optimiser, and class imbalance}
 
@@ -337,15 +364,70 @@ The network minimises weighted binary cross-entropy:
 \end{equation}
 The class weights are $w_0=0.6925$ and $w_1=1.7984$. They make mistakes on the less common positive class more costly during training. This helps with class imbalance but cannot fix the unequal data coverage between warehouses. Binary cross-entropy is used because the target is binary and the model has a sigmoid output. However, this training loss does not directly measure overflow, distance, or energy.
 
-For each mini-batch, Keras calculates the forward pass and the weighted loss in Eq.~\eqref{eq:bce}. TensorFlow then calculates the gradients automatically, and Adam uses them to update the network weights \cite{kingma2015}. This means that backpropagation follows the stated loss even though the gradients are not coded by hand. Adam uses a learning rate of $10^{-3}$ and its standard values for $\beta_1$, $\beta_2$, and $\epsilon$. It is used as a practical default; the project does not claim that it is the best optimiser for this dataset.
+For each mini-batch, Keras calculates the forward pass and the weighted loss in Eq.~\eqref{eq:bce}. TensorFlow then calculates the gradients automatically, and the optimiser uses them to update the network weights. This means that backpropagation follows the stated loss even though the gradients are not coded by hand.
+
+Adam with learning rate $10^{-3}$ was compared with SGD at learning rate $10^{-2}$ using the same 32--16 network, data split, and three seeds. Table~\ref{tab:optimizer-comparison} shows that Adam obtained the higher mean validation PR--AUC and F1 and reached its best validation loss earlier. SGD reached the 100-epoch limit in all three runs, which suggests that this SGD setting would require further learning-rate or momentum tuning. Adam was therefore retained for the final model \cite{kingma2015}. This is a comparison of two specified settings, not proof that Adam is the best possible optimiser.
+
+\begin{table}[H]
+\centering
+\caption{Optimiser comparison on validation data over three training seeds}
+\label{tab:optimizer-comparison}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Optimiser & Learning rate & PR--AUC & F1 at 0.70 & Best loss & Mean best epoch \\
+\midrule
+\rowcolor{paleblue}Adam & 0.001 & $0.9917\pm0.0002$ & $0.9693\pm0.0000$ & 0.0498 & 47.3 \\
+SGD & 0.010 & $0.9898\pm0.0000$ & $0.9639\pm0.0011$ & 0.0616 & 100.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.80\textwidth]{optimizer_comparison.png}
+\caption{Validation PR--AUC and F1 for the tested Adam and SGD settings. Error bars show variation over three seeds.}
+\label{fig:optimizer-comparison}
+\end{figure}
 
 Training uses batches of 256 and at most 100 epochs. Early stopping ends training when validation loss does not improve for eight epochs and restores the best weights. These values were chosen as reasonable baseline settings rather than through a complete hyperparameter search.
+
+Figure~\ref{fig:training-history} shows the training history of the final seed-42 model. Training stopped after 75 epochs, while the lowest validation loss occurred at epoch 67. Training and validation PR--AUC remained close, and validation loss did not show a large increase before stopping. This supports the use of early stopping for this split, but it does not solve the missing positive support at Warehouses~2--4.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{training_history.png}
+\caption{Training and validation history for the final 32--16 MLP. The vertical marker shows the epoch with the lowest validation loss.}
+\label{fig:training-history}
+\end{figure}
 
 \subsection{Framework and implementation choices}
 
 pandas and NumPy are used for data cleaning, 15-minute aggregation, queue updates, and array calculations. scikit-learn provides feature scaling and evaluation metrics. TensorFlow/Keras provides the MLP layers, training process, early stopping, and model saving. During deployment, the saved scaler and feature order are loaded with the model so that training and inference use the same inputs.
 
 ACO is implemented directly in Python so that its transition rule and route constraints are visible in the code. Route validation is kept separate from route construction. The validator recalculates payload, distance, energy, and warehouse eligibility instead of trusting the optimiser's output. For only four warehouses, testing every possible route is also practical and provides a useful reference for ACO.
+
+\subsubsection{Alternative design choices}
+
+Table~\ref{tab:design-alternatives} summarises the main choices and their trade-offs. The alternatives are included to explain the design rather than to claim that every method was tested.
+
+\begin{table}[H]
+\centering
+\caption{Main design choices and alternatives}
+\label{tab:design-alternatives}
+\small
+\begin{tabularx}{\textwidth}{p{0.16\textwidth}p{0.25\textwidth}p{0.18\textwidth}Y}
+\toprule
+Choice & Reason used & Alternative & Trade-off \\
+\midrule
+MLP & Learns nonlinear relationships between fill and recent arrivals & Logistic regression & Logistic regression is simpler; the measured performance difference is small. \\
+Weighted BCE & Gives more importance to the less common positive class & Standard BCE & Standard BCE is simpler but may favour the majority class. \\
+Hard 0.70 filter & Keeps prediction and routing roles easy to inspect & Put risk inside the ACO objective & A hard filter is clear but is sensitive to small score changes near 0.70. \\
+ACO & Provides a routing method that can extend to more warehouses & Exact solver & Exact search guarantees the best small-instance route but scales poorly as the number of warehouses grows. \\
+Adam & Performed better in the three-seed validation comparison & SGD & The tested SGD setting was slightly weaker and reached the epoch limit. \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 \subsection{MLP filter and single-drone ACO}
 
@@ -384,6 +466,53 @@ x_{i,t}=C\frac{A_{i,t}}{\sum_{j\in V(R)}A_{j,t}},\qquad i\in V(R).
 \end{equation}
 The validator recomputes depot endpoints, repeated and filtered nodes, total distance, route energy, payload, and per-warehouse pickup. Goods not collected remain in the queue. Battery is logged after the route and restored before the next interval.
 
+\subsubsection{Deployment pseudocode}
+
+\textbf{Algorithm 1: MLP-filtered routing for one interval}\par
+\textit{Input:} current queues, arrivals, saved scaler and MLP, drone and ACO settings.\par
+\textit{Output:} a validated route, pickups, updated queues, and interval metrics.
+
+The procedure is:
+
+\begin{enumerate}
+  \item Add the current arrivals to each warehouse queue.
+  \item Build the seven MLP features for all four warehouses.
+  \item Apply the saved scaler and MLP to obtain four risk scores.
+  \item Keep non-empty warehouses whose scores are at least 0.70.
+  \item Use ACO to construct feasible routes over the retained warehouses.
+  \item Select the route with the lowest unvisited-node penalty and distance.
+  \item Divide the payload in proportion to the goods at visited warehouses.
+  \item Validate the route, update the queues, and record overflow, distance, and energy.
+\end{enumerate}
+
+This procedure matches the implementation order in \code{run_simulation()}. In particular, the MLP score is used for filtering and is not reused inside the ACO transition probability.
+
+\subsubsection{Computational size and feasibility}
+
+One MLP forward pass uses about $7\times32+32\times16+16\times1=752$ weight multiplications per warehouse, which is small for four warehouses. With $m$ active warehouses, ACO performs approximately $O(IAm^2)$ candidate checks, where $I$ is the number of iterations and $A$ is the number of ants. Exact search is practical for the current four-warehouse experiment, whereas ACO is intended as a method that can be extended to larger routing problems.
+
+\subsubsection{Synthetic multi-stop routing check}
+
+The WEPAStacks test stream never produces more than one active warehouse in an interval. To check the multi-stop code, 15 synthetic cases were created with two, three, or four active warehouses. ACO was run with ten seeds per case and compared with exact search.
+
+\begin{table}[H]
+\centering
+\caption{ACO compared with exact search on synthetic multi-stop cases}
+\label{tab:aco-exact-benchmark}
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+Active warehouses & Cases & ACO runs & Optimal found & ACO time (ms) & Exact time (ms) \\
+\midrule
+2 & 5 & 50 & 100\% & 11.872 & 0.032 \\
+3 & 5 & 50 & 100\% & 16.795 & 0.074 \\
+4 & 5 & 50 & 100\% & 18.037 & 0.146 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+ACO matched the exact objective in all 150 runs and produced no constraint violations. This supports the implementation on the tested small cases, but it does not prove that ACO will be optimal on larger problems. Exact search was faster at the present scale.
+
 \subsection{Theory-to-code mapping}
 
 \begin{table}[H]
@@ -395,24 +524,21 @@ The validator recomputes depot endpoints, repeated and filtered nodes, total dis
 \toprule
 Component & Mathematical or system role & Function or class \\
 \midrule
-Interval grid & Aggregates events and inserts explicit zero-arrival rows for every dock and interval & \code{aggregate_intervals()} in \code{src/data_pipeline.py} \\
-Historical state & Generates queue states with the fixed fullest-first historical policy & \code{simulate_historical_queue()} in \code{src/queue_simulator.py} \\
-Target and split & Implements Eq.~\eqref{eq:target} and chronological split boundaries & \code{add_no_drone_labels()} and \code{chronological_masks()} in \code{src/feature_builder.py} \\
+Data preparation & Aggregates events, creates queue states, labels the target, and applies the chronological split & \code{aggregate_intervals()}, \code{simulate_historical_queue()}, and \code{chronological_masks()} \\
 Forward and backward pass & Builds the $7\!\rightarrow\!32\!\rightarrow\!16\!\rightarrow\!1$ network; \code{model.fit()} invokes automatic differentiation and Adam on Eq.~\eqref{eq:bce} & \code{_fit_mlp()} in \code{src/train_mlp_aco.py} \\
-Risk inference & Restores the scaler and feature order, then evaluates the saved MLP with training disabled & \code{RiskPredictor.predict_frame()} and \code{predict_by_warehouse()} in \code{src/predict_risk.py} \\
-Hard filter & Implements Eq.~\eqref{eq:active-filter}; excluded warehouses never enter the optimiser & \code{select_active_warehouses()} in \code{src/routing_utils.py} \\
+Prediction and filter & Restores the scaler, calculates risk scores, and applies Eq.~\eqref{eq:active-filter} & \code{RiskPredictor} and \code{select_active_warehouses()} \\
 ACO transition & Builds feasible routes using Eq.~\eqref{eq:aco-transition}; the outer routine updates pheromone and tracks the best solution & \code{_construct_ant_solution()} and \code{optimize_aco()} in \code{src/aco_optimizer.py} \\
 Objective and pickup & Implements Eq.~\eqref{eq:aco-objective} and proportional payload allocation & \code{calculate_route_objective()} and \code{allocate_pickups()} in \code{src/routing_utils.py} \\
-Greedy baselines & Constructs comparable nearest-first and fullest-first routes & \code{nearest_first()} and \code{fullest_first()} in \code{src/baselines.py} \\
 Independent validation & Recomputes payload, battery, route distance, visited-node, and demand checks & \code{validate_solution()} in \code{src/solution_validator.py} \\
 Rolling deployment & Calls prediction, filtering, routing, queue updates, overflow accounting, and per-interval battery reset & \code{run_simulation()} in \code{src/rolling_simulation.py} \\
+Design checks & Runs the architecture, optimiser, and ACO--exact comparisons & \code{run_part_b_experiments()} in \code{src/part_b_experiments.py} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
 \subsection{Reproducibility and Hyperparameter Configuration}
 
-The current experiment configuration specifies seed 42 for Python, NumPy, and TensorFlow. Deterministic TensorFlow operations are requested where supported. The recorded development environment lists Python 3.9.6, TensorFlow 2.20.0, Keras 3.10.0, NumPy 2.0.2, pandas 2.3.3, and scikit-learn 1.6.1. These details should be captured again for the final run, and exact bitwise equality across hardware and library versions should not be assumed.
+The experiment uses seed 42 for Python, NumPy, and TensorFlow and requests deterministic TensorFlow operations where supported. The recorded environment uses Python 3.9.6, TensorFlow 2.20.0, Keras 3.10.0, NumPy 2.0.2, pandas 2.3.3, and scikit-learn 1.6.1. Small differences may occur on another computer or library version.
 
 \begin{table}[H]
 \centering
@@ -426,15 +552,16 @@ Parameter & Value & Parameter & Value \\
 Interval & 15 minutes & Horizon & 4 intervals \\
 Capacities & 200, 80, 80, 80 & Congestion level & 80\% of capacity \\
 Hidden units & 32, 16 & Trainable parameters & 801 \\
-Learning rate & 0.001 & Batch size & 256 \\
-Maximum epochs & 100 & Early-stopping patience & 8 \\
+Optimiser & Adam & Learning rate & 0.001 \\
+Batch size & 256 & Maximum epochs & 100 \\
+Early-stopping patience & 8 & Operational threshold & Fixed at 0.70 \\
 Training boundary & Day 60 & Validation boundary & Day 74 \\
-Operational threshold & Fixed at 0.70 & Validation F1 diagnostic & 0.9313 \\
+Validation F1 diagnostic & 0.9313 & Architecture seeds & 42, 43, 44 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-These values describe the implemented baseline and are not the result of a large tuning study. The 60-minute horizon contains four 15-minute intervals. The time-based split prevents later observations from being used during training. Held-out testing, a logistic-regression comparison, a warehouse-ID ablation, and repeated training seeds are used to check the model, but they do not prove that the hyperparameters are optimal.
+These values describe the implemented baseline and are not the result of a large tuning study. The 60-minute horizon contains four 15-minute intervals. The time-based split prevents later observations from being used during training. The small validation studies support the 32--16 architecture and Adam setting among the tested candidates. The learning rate and batch size were not searched systematically. Held-out testing, a logistic-regression comparison, a warehouse-ID ablation, and repeated training seeds provide additional checks without proving that every hyperparameter is optimal.
 
 \subsection{Implementation Details and Observed Challenges}
 
@@ -448,7 +575,7 @@ Class weighting helps with the overall number of positive and negative labels, b
 Scores of 0.699 and 0.700 are almost equal, but only the second score passes the routing filter. Weighted BCE also trains the classifier without directly considering overflow, distance, or energy. The threshold experiment is therefore used to show trade-offs, not to claim that 0.70 is optimal. The output is called a risk score rather than an exact probability because its calibration is not perfect.
 
 \paragraph{Limited ACO test cases.}
-ACO can construct a route with several stops, but the evaluation data never has more than one active warehouse in an interval. Repeating ACO with different seeds checks reproducibility and constraints, but it does not test how well ACO orders several stops. A future test should include several active warehouses and compare ACO with every possible route.
+ACO can construct a route with several stops, but the WEPAStacks evaluation data never has more than one active warehouse in an interval. The synthetic benchmark shows that the implementation matches exact search on the 15 tested small cases. However, these artificial cases do not replace operational evidence with real simultaneous demand.
 
 \section{Part C --- Model Evaluation and Refinement}
 
@@ -566,35 +693,31 @@ The threshold experiment shows a clear trade-off. Reducing the threshold from 0.
 \FloatBarrier
 \subsection{Implementation Verification}
 
-The test suite completed 21 tests with no failures. The tests cover the 0.70 boundary, empty and filtered warehouses, depot endpoints, repeated nodes, payload, energy, distance, battery reset, queue updates, fixed seeds, and one small comparison with the exact solver. These tests support the checked cases but cannot cover every possible route or system state.
+The test suite completed 22 tests with no failures. The tests cover the 0.70 boundary, empty and filtered warehouses, depot endpoints, repeated nodes, payload, energy, distance, battery reset, queue updates, fixed seeds, one exact-solver comparison, and reproducible generation of the synthetic routing cases. These tests support the checked cases but cannot cover every possible route or system state.
 
 \subsection{Answer to the Research Question}
 
-For Warehouse~1, the MLP improves F1 from 0.8769 for the current-fill baseline to 0.9699. MLP filtering also reduces simulated overflow by 11.38\% relative to ACO-current. This supports the use of recent arrival information for earlier pickup decisions. However, the result does not show positive-case performance at Warehouses~2--4 or the quality of multi-stop ACO routes.
+For Warehouse~1, the MLP improves F1 from 0.8769 for the current-fill baseline to 0.9699. MLP filtering also reduces simulated overflow by 11.38\% relative to ACO-current. This supports the use of recent arrival information for earlier pickup decisions. The synthetic benchmark supports the multi-stop ACO implementation on small artificial cases, but the WEPAStacks result still does not show positive-case performance at Warehouses~2--4 or operational multi-stop routing.
 
 \subsection{Loss--Objective Mismatch}
 
-Weighted BCE trains the MLP to match the binary congestion label. The practical goal is different because it also includes overflow, collected goods, distance, and energy. A lower BCE does not always change the route. For example, a score may improve while remaining below 0.70. In contrast, a small change from 0.699 to 0.700 immediately changes whether the warehouse can be routed.
-
-The ACO objective has a similar mismatch. Equation~\eqref{eq:aco-objective} first rewards visiting active warehouses and then rewards shorter routes. It does not directly reward collected quantity or avoided overflow. For example, it may prefer two small warehouses over one warehouse with much more cargo. The report therefore evaluates overflow, collection, distance, and energy in addition to the ACO objective value.
+Weighted BCE measures prediction error, while the practical system also depends on overflow, distance, and energy. A score change has no routing effect if it remains below 0.70, whereas a change from 0.699 to 0.700 activates a warehouse. Similarly, the ACO objective rewards active visits and short routes but does not directly minimise overflow. For this reason, both prediction and operational metrics are reported.
 
 \subsection{Interpretation and Trade-offs}
 
 The fixed routing threshold is 0.70, while the best validation F1 occurred at 0.9313. Lower thresholds reduce overflow but increase distance and energy. The value 0.70 is therefore a configured operating choice, not a proven best threshold. The sigmoid output is called a risk score because it is not perfectly calibrated as a probability.
 
-The single-drone design is easier to explain and test. With four active warehouses, there are only $4!=24$ complete visit orders before shorter routes are considered. Testing every possible route is therefore practical and should be used as a stronger reference for ACO.
+With only four warehouses, exact search is practical and provides a useful reference for ACO.
 
 \subsection{Limitations}
 
 \begin{enumerate}
   \item \textbf{Simulated target.} Queue length and congestion are created from assumed capacities and drone behaviour, not measured warehouse congestion. Some positive cases are already at the 80\% boundary, so the task mixes current detection with future forecasting.
   \item \textbf{Unequal warehouse data.} Warehouse~1 contains 93.26\% of inbound events. Warehouses~2--4 end early and have no positive validation or test labels.
-  \item \textbf{Unclear zero intervals.} For Warehouses~2--4, a zero may mean no arrivals or that the warehouse was no longer being recorded.
-  \item \textbf{Warehouse ID and calibration.} Removing warehouse ID changed the metrics, and some score ranges contain few samples. The model output should therefore be treated as a risk score rather than an exact probability.
+  \item \textbf{Data coverage and score interpretation.} For Warehouses~2--4, a zero may mean no arrivals or missing operation. Removing warehouse ID also changed the metrics, so the output is treated as a risk score rather than an exact probability.
   \item \textbf{Limited feature set.} The baseline excludes hour-of-day, shift, robot state, downtime, service completions, and SKU mixture.
   \item \textbf{Simplified drone model.} Battery is restored every 15 minutes, and the simulation omits flight time, charging time, weather, no-fly zones, and collision avoidance.
-  \item \textbf{Hard filter and objective.} A small score change around 0.70 can change the route. The ACO objective also does not directly minimise overflow or maximise collection.
-  \item \textbf{Limited ACO evidence.} No interval contains more than one active warehouse. The experiment therefore does not test multi-stop route ordering, and an exact solver may be more suitable for only four warehouses.
+  \item \textbf{Routing evidence.} The hard 0.70 filter can change a route after a small score change. The synthetic test checks multi-stop routing, but no WEPAStacks interval contains more than one active warehouse.
 \end{enumerate}
 
 \subsection{Recommended Refinements}
@@ -605,13 +728,13 @@ Future evaluation should keep chronological data splits and report the number of
 
 The routing threshold should be compared on a validation simulation before one value is selected. Future policies could also require a minimum pickup load. The ACO penalty could be changed to include expected overflow, although this would make the algorithm more complex.
 
-Future routing tests need several active warehouses at the same time. ACO can then be compared with every possible route to measure how close it comes to the best solution. Running more seeds on the current one-active-warehouse data would not provide new route-order evidence.
+Future operational routing tests need real or realistic time-series scenarios with several active warehouses at the same time. The completed synthetic benchmark should then be extended to larger networks where exact search becomes difficult. Running more seeds on the current one-active-warehouse stream would not provide new route-order evidence.
 
 \section{Conclusion}
 
 The final system has two stages. First, the MLP produces one risk score for each warehouse, and a fixed 0.70 threshold selects non-empty warehouses. Second, single-drone ACO builds a distance-based route over the selected set. The route objective penalises unvisited active warehouses before distance, and the payload is shared in proportion to the available goods.
 
-For Warehouse~1 and the simulated target, the MLP produced strong and stable prediction results. The 0.70 MLP--ACO policy reduced overflow by 11.38\% relative to current-state routing, although it used more distance and energy. All checked constraints were satisfied. However, Warehouses~2--4 have no positive test cases, and the data does not test multi-stop routing. The results therefore support the prediction and pickup-filtering stages, but they do not yet prove the routing benefit of ACO.
+For Warehouse~1 and the simulated target, the MLP produced strong and stable prediction results. The 0.70 MLP--ACO policy reduced overflow by 11.38\% relative to current-state routing, although it used more distance and energy. All checked constraints were satisfied. ACO also matched exact search in all 150 synthetic runs, but exact search was faster at this small scale. Warehouses~2--4 still have no positive test cases, and the operational stream does not test multi-stop routing. The results therefore support prediction, pickup filtering, and basic ACO correctness, but not a real multi-stop routing benefit.
 
 \section{Reproducibility Checklist}
 
@@ -623,7 +746,8 @@ For Warehouse~1 and the simulated target, the MLP produced strong and stable pre
   \item Integrated experiment configuration: \code{config/experiment.yaml}.
   \item Routing entry point: \code{run_experiment.py}.
   \item Test command: \code{PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache .venv/bin/python -m unittest discover -s tests -v}.
-  \item Current verification: 21 tests passed in the available virtual environment; rerun immediately before submission.
+  \item Current verification: 22 tests passed in the available virtual environment; rerun immediately before submission.
+  \item Part B experiment entry point: \code{run_part_b_experiments.py}; outputs include the architecture comparison, optimiser comparison, and synthetic ACO--exact benchmark.
   \item Routing recreated \code{outputs_single_drone} for the complete held-out period and all configured seeds.
   \item The run records ten seeds for each stochastic ACO policy and reports that the maximum simultaneous active-warehouse count is one.
 \end{itemize}

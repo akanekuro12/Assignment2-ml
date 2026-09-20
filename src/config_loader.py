@@ -78,6 +78,8 @@ def validate_config(config: Dict[str, Any]) -> None:
         value = float(config["mlp"][name])
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"mlp.{name} must be in [0, 1].")
+    if str(config["mlp"].get("optimizer", "adam")).lower() not in {"adam", "sgd"}:
+        raise ValueError("mlp.optimizer must be either adam or sgd.")
     evaluation_seeds = [int(value) for value in config["mlp"].get("evaluation_seeds", [])]
     if len(evaluation_seeds) != len(set(evaluation_seeds)):
         raise ValueError("mlp.evaluation_seeds must not contain duplicates.")
@@ -89,6 +91,24 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ValueError("simulation.threshold_sweep values must be in [0, 1].")
     if str(config["simulation"]["battery_reset_policy"]) != "per_interval":
         raise ValueError("The single-drone experiment requires per_interval battery reset.")
+
+    part_b = config.get("part_b_experiments", {})
+    architectures = part_b.get("architectures", [])
+    if any(not values or any(int(value) <= 0 for value in values) for values in architectures):
+        raise ValueError("Every Part B architecture must contain positive hidden units.")
+    architecture_seeds = [int(value) for value in part_b.get("architecture_seeds", [])]
+    if len(architecture_seeds) != len(set(architecture_seeds)):
+        raise ValueError("Part B architecture seeds must not contain duplicates.")
+    if int(part_b.get("synthetic_cases_per_size", 1)) <= 0:
+        raise ValueError("Part B synthetic_cases_per_size must be positive.")
+    synthetic_seeds = [int(value) for value in part_b.get("synthetic_aco_seeds", [])]
+    if len(synthetic_seeds) != len(set(synthetic_seeds)):
+        raise ValueError("Part B synthetic ACO seeds must not contain duplicates.")
+    for candidate in part_b.get("optimizers", []):
+        if str(candidate.get("optimizer", "")).lower() not in {"adam", "sgd"}:
+            raise ValueError("Every Part B optimiser must be adam or sgd.")
+        if float(candidate.get("learning_rate", 0.0)) <= 0:
+            raise ValueError("Every Part B optimiser learning rate must be positive.")
 
 
 def resolve_project_path(value: str | Path, config: Dict[str, Any] | None = None) -> Path:
