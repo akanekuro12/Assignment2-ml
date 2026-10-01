@@ -1,15 +1,15 @@
-# WEPAStacks: MLP + ACO cho một drone
+# WEPAStacks: MLP + ACO for a Single Drone
 
-Dự án tách thành hai bài toán độc lập:
+The project separates two tasks:
 
-1. **MLP dự đoán:** với từng kho, trả về xác suất kho sẽ đạt mức đầy 80% trong 60 phút tới.
-2. **ACO định tuyến:** chỉ nhận các kho có xác suất `>= 0.70`, rồi tìm một route ngắn cho đúng một drone dưới các giới hạn vật lý.
+1. **MLP prediction:** for each warehouse, estimate the probability that its stock will reach 80% of capacity within the next 60 minutes.
+2. **ACO routing:** consider only warehouses with a predicted probability of `>= 0.70`, then find a short route for one drone under physical constraints.
 
-Không có `urgency`, `projected_stock` hoặc `required_pickup` trong ACO. Các kho có xác suất dưới 70% bị loại trước khi ACO chạy và không thể xuất hiện trong route.
+ACO does not use `urgency`, `projected_stock`, or `required_pickup`. Warehouses with a probability below 70% are excluded before ACO runs and cannot appear on its route.
 
-## 1. Dữ liệu và MLP
+## 1. Data and MLP
 
-Mỗi observation là trạng thái một kho ở cuối interval 15 phút. Vector input có bảy phần tử:
+Each observation describes one warehouse at the end of a 15-minute interval. The input vector has seven features:
 
 ```text
 [buffer_fill_ratio,
@@ -18,25 +18,25 @@ Mỗi observation là trạng thái một kho ở cuối interval 15 phút. Vect
  dock_1, dock_2, dock_3, dock_4]
 ```
 
-Target là nhãn nhị phân `congestion = 1` nếu lượng hàng trong kịch bản không có drone đạt ít nhất 80% capacity trong bốn interval tiếp theo. Dữ liệu tương lai chỉ tạo label, không đi vào input.
+The target is the binary label `congestion = 1` if stock would reach at least 80% of capacity during the next four intervals without a drone pickup. Future data is used only to create the label, never as an input feature.
 
 ```text
 Input(7) -> Dense(32, ReLU) -> Dense(16, ReLU) -> Dense(1, Sigmoid)
 ```
 
-Output sigmoid là xác suất trong `[0, 1]`, không phải nhãn binary. Ngưỡng vận hành cố định là `0.70`:
+The sigmoid output is a probability in `[0, 1]`, not a binary label. The fixed operational threshold is `0.70`:
 
 ```text
 active_warehouses = {i | probability[i] >= 0.70 and available[i] > 0}
 ```
 
-Dữ liệu được chia theo thời gian: ngày 1–60 train, ngày 61–74 validation, từ ngày 75 trở đi test. Scaler chỉ fit trên train.
+Data is split chronologically: days 1–60 for training, days 61–74 for validation, and day 75 onward for testing. The scaler is fitted only on the training set.
 
-## 2. ACO một drone
+## 2. Single-Drone ACO
 
-Input của ACO gồm danh sách kho đã qua bộ lọc 70% và lượng hàng hiện có, ma trận khoảng cách, một drone, pheromone và các tham số ACO.
+ACO takes the warehouses that pass the 70% filter and their available stock, a distance matrix, one drone, pheromone values, and ACO parameters.
 
-Mỗi ant xây một route bắt đầu tại depot `0`. Ở mỗi bước, ant chỉ xét kho chưa ghé mà drone vẫn đủ pin và đủ giới hạn quãng đường để đi tới kho đó rồi quay về depot. Xác suất chọn cạnh chỉ dựa trên pheromone và khoảng cách:
+Each ant builds a route starting at depot `0`. At each step, it considers only unvisited warehouses that the drone can reach while retaining enough battery and route-distance allowance to return to the depot. Edge-selection probabilities depend only on pheromone and distance:
 
 ```text
 score(i, j) = pheromone(i, j)^alpha * (1 / distance(i, j))^beta
@@ -49,9 +49,9 @@ objective = 1000 * number_of_unvisited_active_warehouses
           + 1 * route_distance
 ```
 
-Vì route bị giới hạn tối đa 30 km, penalty 1000 khiến thuật toán ưu tiên ghé nhiều kho active nhất; nếu số kho ghé bằng nhau, route ngắn hơn thắng. Kho active không thể ghé trong interval hiện tại vẫn nằm trong queue để xét lại ở interval sau.
+Routes are limited to 30 km, so the penalty of 1000 makes the algorithm prioritize visiting as many active warehouses as possible. If two routes visit the same number of warehouses, the shorter route wins. An active warehouse that cannot be visited in the current interval remains in the queue for consideration in the next interval.
 
-Ràng buộc:
+Constraints:
 
 ```text
 route starts and ends at depot 0
@@ -61,22 +61,22 @@ sum(pickup) <= payload_capacity
 pickup[i] <= available[i]
 ```
 
-Tải trọng được chia theo tỷ lệ lượng hàng giữa các kho trên route. Pin được reset tại đầu mỗi interval, tương ứng giả định thay/sạc pin ở depot.
+The payload is allocated among warehouses on the route in proportion to their available stock. The battery is reset at the start of each interval, representing battery replacement or charging at the depot.
 
-## 3. Luồng chạy
+## 3. Execution Flow
 
 ```text
-WEPAStack events
-  -> aggregate theo 15 phút
-  -> trạng thái queue của từng kho
+WEPAStacks events
+  -> aggregate into 15-minute intervals
+  -> queue state for each warehouse
   -> MLP probability
-  -> lọc probability >= 0.70
+  -> filter for probability >= 0.70
   -> single-drone ACO
-  -> kiểm tra pin, quãng đường và payload
-  -> cập nhật pickup, queue và overflow
+  -> check battery, distance, and payload limits
+  -> update pickups, queues, and overflow
 ```
 
-## 4. Chạy project
+## 4. Running the Project
 
 ```bash
 source .venv/bin/activate
@@ -85,19 +85,16 @@ python run_experiment.py --threshold-sweep
 python run_part_b_experiments.py
 ```
 
-Chạy test:
+Run the tests:
 
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/assignment2_pycache \
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Sau khi chạy, model và các architecture/optimizer-validation artifact được tạo trong
-`model_outputs_single_drone/`. Kết quả simulation và synthetic ACO benchmark
-được tạo trong `outputs_single_drone/`. Các entry point có thể tái tạo những
-artifact này từ cấu hình hiện tại.
+After running the commands, the trained model and architecture/optimizer validation artifacts are stored in `model_outputs_single_drone/`. Simulation results and the synthetic ACO benchmark are stored in `outputs_single_drone/`. The entry points can regenerate these artifacts from the current configuration.
 
-Các bảng và biểu đồ chính được tạo tự động khi train/chạy experiment:
+The main tables and figures generated during training and experiments are:
 
 ```text
 model_outputs_single_drone/classification_metrics_at_070.csv
@@ -118,30 +115,29 @@ outputs_single_drone/tables/aco_exact_benchmark_summary.csv
 outputs_single_drone/figures/
 ```
 
-Không xem các file trong hai thư mục output là source hoặc bằng chứng cuối cùng
-nếu chưa ghi lại phạm vi chạy, seed và cấu hình tạo ra chúng.
+Do not treat files in either output directory as source files or final evidence without recording the run scope, seed, and configuration that produced them.
 
-## 5. File chính
+## 5. Main Files
 
 ```text
-config/experiment.yaml       threshold, drone và ACO config
-src/feature_builder.py       feature và congestion label
-src/train_mlp_aco.py         train MLP
-src/predict_risk.py          trả xác suất theo từng kho
-src/routing_utils.py         lọc 70%, pickup và objective
+config/experiment.yaml       thresholds, drone settings, and ACO configuration
+src/feature_builder.py       features and congestion labels
+src/train_mlp_aco.py         MLP training
+src/predict_risk.py          per-warehouse risk probabilities
+src/routing_utils.py         70% filter, pickups, and objective
 src/aco_optimizer.py         single-drone ACO
-src/solution_validator.py    kiểm tra constraint độc lập
-src/rolling_simulation.py    pipeline end-to-end
-src/part_b_experiments.py    architecture, optimizer và synthetic ACO checks
-run_part_b_experiments.py    entry point cho Part B experiments
+src/solution_validator.py    independent constraint checks
+src/rolling_simulation.py    end-to-end pipeline
+src/part_b_experiments.py    architecture, optimizer, and synthetic ACO checks
+run_part_b_experiments.py    entry point for Part B experiments
 ```
 
-Đặc tả triển khai chi tiết bằng tiếng Việt nằm tại `docs/implementation_guide_single_drone_mlp_aco_vi.md`.
+A detailed implementation guide in Vietnamese is available at `docs/implementation_guide_single_drone_mlp_aco_vi.md`.
 
-## 6. Giới hạn
+## 6. Limitations
 
-- Congestion label được tạo bằng simulation, không phải nhãn congestion quan sát trực tiếp.
-- Capacity, tọa độ, depot và thông số drone là giả định thí nghiệm.
-- Một event được xem là một standardized cargo unit.
-- Chưa mô phỏng thời gian bay, thời gian sạc, thời tiết, vùng cấm bay hay tránh va chạm.
-- Với chỉ bốn kho, exact solver được giữ để đối chiếu ACO trên instance nhỏ.
+- Congestion labels are generated by simulation rather than observed congestion outcomes.
+- Warehouse capacities, coordinates, the depot, and drone specifications are experimental assumptions.
+- Each event is treated as one standardized cargo unit.
+- Flight time, charging time, weather, no-fly zones, and collision avoidance are not simulated.
+- With only four warehouses, the exact solver is retained as a reference for comparing ACO on small instances.
