@@ -20,6 +20,7 @@
 \usepackage{subcaption}
 \usepackage{float}
 \usepackage{placeins}
+\usepackage[round,authoryear]{natbib}
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{tikz}
@@ -55,6 +56,9 @@
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 \newcommand{\code}[1]{\nolinkurl{#1}}
 \newcommand{\R}{\mathbb{R}}
+\renewcommand{\refname}{References}
+\setlength{\bibhang}{0.5in}
+\setlength{\bibsep}{0.5em}
 
 \title{\textbf{WEPAStacks Inbound Congestion Prediction and Single-Drone Routing}\\[0.45em]
 \large An MLP-Filtered Ant Colony Optimisation Framework}
@@ -174,7 +178,7 @@ Stability & Repeated ACO runs on identical states and arrival streams & Use the 
 
 \subsubsection{Dataset Structure and Quality}
 
-The supplied WEPAStacks documentation describes 89 days of operations in a finished-goods warehouse and three source files: a layout file, an order-event file, and an initial-fill file. The current implementation does not consume all three files directly. It uses a cleaned CSV derived from delivery events at inbound points 1--4; retrieval events, outbound points, the original layout, and initial inventory are outside the present learning interface.
+The WEPAStacks dataset is described by \citet{pfrommer2022} and distributed with the SLAPStack repository \citep{rinciog2023}. It records 89 days of operations in a finished-goods warehouse and has three source files: a layout file, an order-event file, and an initial-fill file. The current implementation does not consume all three files directly. It uses a cleaned CSV derived from delivery events at inbound points 1--4; retrieval events, outbound points, the original layout, and initial inventory are outside the present learning interface.
 
 The cleaned dataset contains 205,258 inbound events from days 2--89. Its nine fields include arrival time, dock, SKU, batch, and several derived time fields. The preprocessing checks found no missing values, invalid dock identifiers, negative times, or fully duplicated rows. There are 4,763 repeated combinations of arrival time and dock. They are retained because different cargo events can arrive at the same dock in the same second.
 
@@ -325,7 +329,7 @@ The forward pass can be written as
 \hat{p} &= \sigma(\mathbf{w}_3^\top\mathbf{h}_2+b_3).
 \end{align}
 
-The two hidden layers allow the model to learn nonlinear relationships between current fill and recent arrivals. The complete network has only 801 trainable parameters, so it is a lightweight model for this tabular dataset. ReLU is used in the hidden layers, and the sigmoid output maps the final value to a score between zero and one \cite{rumelhart1986,glorot2010}.
+The two hidden layers allow the model to learn nonlinear relationships between current fill and recent arrivals. The complete network has only 801 trainable parameters, so it is a lightweight model for this tabular dataset. ReLU is used in the hidden layers, and the sigmoid output maps the final value to a score between zero and one \citep{glorot2010,rumelhart1986}.
 
 \subsubsection{Validation comparison of model sizes}
 
@@ -366,7 +370,7 @@ The class weights are $w_0=0.6925$ and $w_1=1.7984$. They make mistakes on the l
 
 For each mini-batch, Keras calculates the forward pass and the weighted loss in Eq.~\eqref{eq:bce}. TensorFlow then calculates the gradients automatically, and the optimiser uses them to update the network weights. This means that backpropagation follows the stated loss even though the gradients are not coded by hand.
 
-Adam with learning rate $10^{-3}$ was compared with SGD at learning rate $10^{-2}$ using the same 32--16 network, data split, and three seeds. Table~\ref{tab:optimizer-comparison} shows that Adam obtained the higher mean validation PR--AUC and F1 and reached its best validation loss earlier. SGD reached the 100-epoch limit in all three runs, which suggests that this SGD setting would require further learning-rate or momentum tuning. Adam was therefore retained for the final model \cite{kingma2015}. This is a comparison of two specified settings, not proof that Adam is the best possible optimiser.
+Adam with learning rate $10^{-3}$ was compared with SGD at learning rate $10^{-2}$ using the same 32--16 network, data split, and three seeds. Table~\ref{tab:optimizer-comparison} shows that Adam obtained the higher mean validation PR--AUC and F1 and reached its best validation loss earlier. SGD reached the 100-epoch limit in all three runs, which suggests that this SGD setting would require further learning-rate or momentum tuning. Adam was therefore retained for the final model \citep{kingma2015}. This is a comparison of two specified settings, not proof that Adam is the best possible optimiser.
 
 \begin{table}[H]
 \centering
@@ -438,7 +442,7 @@ At interval $t$, available goods are $A_{i,t}=Q_{i,t}+a_{i,t}$. For MLP--ACO, th
 \end{equation}
 Warehouses outside $\mathcal{S}_t$ are absent from the ACO input and cannot appear in its route. For nearest-first, fullest-first, and ACO-current, the active set instead uses the current-fill rule $A_{i,t}/K_i\geq0.80$. This is the only difference between ACO-current and MLP--ACO; both use the same route optimiser.
 
-Each ant begins at depot 0 and maintains the travelled distance. A candidate warehouse $j$ is feasible only if the route can visit it and still return to the depot:
+The route search uses pheromone and distance heuristics inspired by ant colony methods \citep{dorigo1997}. Each ant begins at depot 0 and maintains the travelled distance. A candidate warehouse $j$ is feasible only if the route can visit it and still return to the depot:
 \begin{align}
 D_{\mathrm{proj}} &= D_{\mathrm{so\ far}}+d_{ij}+d_{j0},\\
 D_{\mathrm{proj}} &\leq D_{\max},\\
@@ -589,7 +593,7 @@ The routing output should start and end at the depot and visit only warehouses t
 
 \subsection{Evaluation Protocol and Metrics}
 
-Accuracy alone can be misleading when the classes are imbalanced. Precision measures how many warnings are correct, recall measures how many positive cases are detected, and F1 balances both values. Balanced accuracy gives equal importance to the positive and negative classes. PR--AUC and ROC--AUC measure ranking performance across thresholds \cite{saito2015}. The confusion matrix and per-warehouse sample counts are also reported because a strong overall score may hide weak coverage at some warehouses.
+Accuracy alone can be misleading when the classes are imbalanced. Precision measures how many warnings are correct, recall measures how many positive cases are detected, and F1 balances both values. Balanced accuracy gives equal importance to the positive and negative classes. PR--AUC and ROC--AUC measure ranking performance across thresholds \citep{saito2015}. The confusion matrix and per-warehouse sample counts are also reported because a strong overall score may hide weak coverage at some warehouses.
 
 Routing is evaluated using overflow, collected goods, distance, energy, number of sorties, active-warehouse visits, runtime, and constraint violations. MLP--ACO is compared with nearest-first, fullest-first, and ACO-current on the same held-out arrival stream. Each ACO policy is run with ten seeds.
 
@@ -802,35 +806,26 @@ The Brier score is the mean squared difference between a predicted score and the
 
 \begin{thebibliography}{9}
 
-\bibitem{rumelhart1986}
-D. E. Rumelhart, G. E. Hinton, and R. J. Williams.
-Learning representations by back-propagating errors.
-\emph{Nature}, 323:533--536, 1986.
+\bibitem[Dorigo \& Gambardella(1997)]{dorigo1997}
+Dorigo, M., \& Gambardella, L. M. (1997). Ant colony system: A cooperative learning approach to the traveling salesman problem. \emph{IEEE Transactions on Evolutionary Computation, 1}(1), 53--66. \url{https://doi.org/10.1109/4235.585892}
 
-\bibitem{glorot2010}
-X. Glorot and Y. Bengio.
-Understanding the difficulty of training deep feedforward neural networks.
-In \emph{Proceedings of AISTATS}, pages 249--256, 2010.
+\bibitem[Glorot \& Bengio(2010)]{glorot2010}
+Glorot, X., \& Bengio, Y. (2010). Understanding the difficulty of training deep feedforward neural networks. In Y. W. Teh \& M. Titterington (Eds.), \emph{Proceedings of the Thirteenth International Conference on Artificial Intelligence and Statistics} (Vol. 9, pp. 249--256). Proceedings of Machine Learning Research. \url{https://proceedings.mlr.press/v9/glorot10a.html}
 
-\bibitem{kingma2015}
-D. P. Kingma and J. Ba.
-Adam: A method for stochastic optimization.
-In \emph{International Conference on Learning Representations}, 2015.
+\bibitem[Kingma \& Ba(2015)]{kingma2015}
+Kingma, D. P., \& Ba, J. (2015). Adam: A method for stochastic optimization. In \emph{Proceedings of the 3rd International Conference on Learning Representations}. \url{https://arxiv.org/abs/1412.6980}
 
-\bibitem{dorigo1997}
-M. Dorigo and L. M. Gambardella.
-Ant colony system: A cooperative learning approach to the traveling salesman problem.
-\emph{IEEE Transactions on Evolutionary Computation}, 1(1):53--66, 1997.
+\bibitem[Pfrommer et~al.(2022)Pfrommer, Rinciog, Zahid, Morrissey, and Meyer]{pfrommer2022}
+Pfrommer, J., Rinciog, A., Zahid, S., Morrissey, M., \& Meyer, A. (2022). SLAPStack: A simulation framework and a large-scale benchmark use case for autonomous block stacking warehouses. In J. de Armas, H. Ramalhinho, \& S. Vo\ss{} (Eds.), \emph{Computational logistics} (Lecture Notes in Computer Science, Vol. 13557, pp. 291--305). Springer. \url{https://doi.org/10.1007/978-3-031-16579-5_20}
 
-\bibitem{saito2015}
-T. Saito and M. Rehmsmeier.
-The precision-recall plot is more informative than the ROC plot when evaluating binary classifiers on imbalanced datasets.
-\emph{PLOS ONE}, 10(3):e0118432, 2015.
+\bibitem[Rinciog et~al.(2023)Rinciog, Pfrommer, Morrissey, Zahid, Vasileva, Ogorelysheva, Rathod, and Meyer]{rinciog2023}
+Rinciog, A., Pfrommer, J., Morrissey, M., Zahid, S., Vasileva, A., Ogorelysheva, N., Rathod, H., \& Meyer, A. (2023). \emph{SLAPStack} [Computer software and data set]. GitHub. \url{https://github.com/malerinc/slapstack}
 
-\bibitem{projectdocs}
-WEPAStacks project documentation.
-\emph{Dataset Analysis Report, MLP Training Specification, MLP Training Report, Single-Drone MLP--ACO Implementation Guide, and Assessment Criteria}.
-Internal assignment documents, 2026.
+\bibitem[Rumelhart et~al.(1986)Rumelhart, Hinton, and Williams]{rumelhart1986}
+Rumelhart, D. E., Hinton, G. E., \& Williams, R. J. (1986). Learning representations by back-propagating errors. \emph{Nature, 323}(6088), 533--536. \url{https://doi.org/10.1038/323533a0}
+
+\bibitem[Saito \& Rehmsmeier(2015)]{saito2015}
+Saito, T., \& Rehmsmeier, M. (2015). The precision-recall plot is more informative than the ROC plot when evaluating binary classifiers on imbalanced datasets. \emph{PLOS ONE, 10}(3), e0118432. \url{https://doi.org/10.1371/journal.pone.0118432}
 
 \end{thebibliography}
 
